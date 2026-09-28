@@ -1,10 +1,14 @@
-# Card Scanner - Android (Magic only, first version)
+# MTG Card Scanner - Android
 
-Native Kotlin app (Jetpack Compose + CameraX + OpenCV): the phone's camera finds the card
-by its outline, captures it once it is still, has a vision AI read name / collector number /
-set code / ★• foil marker, and looks up the exact printing on the Scryfall API. No inventory yet.
+Native Kotlin app (Jetpack Compose + CameraX + OpenCV) for Magic: The Gathering cards: the
+phone's camera finds the card by its outline (or a fixed area), captures it once it is still,
+has a vision AI read name / collector number / set code / ★• foil marker, finds the exact
+printing (offline card data or the Scryfall API) and keeps an inventory with CSV / Moxfield
+export and import. Uncertain cards wait in a review queue.
 
-Ported from the Python scanner - keep both in step:
+Ported from the desktop scanner (Python / Flask, repository
+[SilentKernel81/scanner](https://github.com/SilentKernel81/scanner)) - keep both in step. The Python
+paths below are in that repository:
 
 | Android | Python |
 |---|---|
@@ -27,7 +31,7 @@ export JAVA_HOME=/opt/android-studio/jbr
 ~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or open `android/` in Android Studio and Run. In the app: Settings -> provider, model and API
+Or open this folder in Android Studio and Run. In the app: Settings -> provider, model and API
 key, or the local server address (`http://<host>:11434` for Ollama; "Test / list models").
 
 ## Tests
@@ -35,7 +39,9 @@ key, or the local server address (`http://<host>:11434` for Ollama; "Test / list
 - `./gradlew testDebugUnitTest` - AI answer parser and name similarity against the Python
   results (`app/src/test/resources/parser_reference.json`, made by `parser_reference.py`); CSV
   export against `write_csv` (`export_reference.json`, made by `export_reference.py`); CSV import
-  (`ImportTest`: round trips, Moxfield's own export).
+  (`ImportTest`: round trips, Moxfield's own export). The reference scripts run in the desktop
+  scanner's checkout with its venv, e.g. from there:
+  `venv/bin/python ../mtg-scanner-android/app/src/test/resources/export_reference.py ../mtg-scanner-android/app/src/test/resources/export_reference.json`
 - `OfflineFindTest` (instrumented; card data downloaded + internet) - offline lookups against the
   API. 2026-09-26: every set + number / name + number read gave the same printing and tag; only
   name-only matches differ (Scryfall's default printing vs the newest), which go to review anyway.
@@ -44,7 +50,8 @@ key, or the local server address (`http://<host>:11434` for Ollama; "Test / list
   `./gradlew assembleDebugAndroidTest -PdebugFrames=<dir containing frames/>`, install both
   APKs, `adb shell am instrument -w -e class com.cardscanner.OutlineParityTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`,
   then `adb pull /sdcard/Android/data/com.cardscanner/files/outlines.json`.
-  (Measured 2026-09-26 on 400 frames of data/debug_frames: same detections as Python, corners within 0.6 px.)
+  (Measured 2026-09-26 on 400 frames of the desktop scanner's data/debug_frames: same detections
+  as Python, corners within 0.6 px.)
 - `PipelineTest` (instrumented) - card images (assets `cards/`) -> local AI -> Scryfall:
   `-e aiUrl http://host:11434 -e aiModel <model>`; writes `pipeline.json`.
 
