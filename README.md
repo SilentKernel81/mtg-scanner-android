@@ -19,7 +19,7 @@ paths below are in that repository:
 | `scryfall/CardDatabase.kt` | `database.py` card table: Scryfall's default cards downloaded in Settings (~80 MB, ~1.5 min), trimmed; fuzzy names like `names_match` |
 | `inventory/ReviewQueue.kt`, `ui/ReviewScreen.kt` | `review.py` + the web review: uncertain cards (not confirmed, not found, nothing read, AI errors) queued with their photo while adding automatically; review with suggestion, printing search, Identify again |
 | `inventory/Import.kt` | `inventory.py:import_csv` - reads this app's / the Python scanner's CSV and Moxfield's; cards looked up by set + number, then name (Scryfall `/cards/collection` online) |
-| `inventory/Inventory.kt`, `inventory/Export.kt` | `inventory.py` (same table and merge key; confirmed cards added automatically like `auto_add`), `games/mtg.py` (`write_csv` - byte-identical, `ExportParityTest`; Moxfield) |
+| `inventory/Inventory.kt`, `inventory/Export.kt` | `inventory.py` (same table and merge key; confirmed cards added automatically like `auto_add`), the server's collection CSV (`scanner-server` `games/base.py`: `write_collection_csv` - byte-identical, `ExportParityTest`: with Card ID and Set Code, so its collection page imports each entry as the printing it is; checked 2026-10-09 with 102 entries of the emulator's inventory: all imported, every card id found in the server's card data); Moxfield |
 
 ## Client of a scanner server
 

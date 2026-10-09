@@ -1,6 +1,8 @@
 {
  "rows": [
   {
+   "card_id": "0a7b2e5c-1111-4222-8333-444455556666",
+   "set_code": "hoc",
    "name": "Thorin, King of Durin's Folk",
    "set_name": "The Hobbit Eternal",
    "number": "3",
@@ -16,6 +18,8 @@
    "timestamp": "2026-09-25 21:24:47"
   },
   {
+   "card_id": null,
+   "set_code": "tst",
    "name": "The \"Quoted\" Card",
    "set_name": "Test",
    "number": "12a",
@@ -31,6 +35,8 @@
    "timestamp": "2026-09-26 10:00:00"
   },
   {
+   "card_id": "9f8e7d6c-aaaa-4bbb-8ccc-ddddeeeeffff",
+   "set_code": "hob",
    "name": "Smaug",
    "set_name": "The Hobbit",
    "number": "109",
@@ -46,5 +52,5 @@
    "timestamp": "2026-09-26 11:00:00"
   }
  ],
- "csv": "Card Name,Set,Card Number,Rarity,Type,Mana Cost,Colors,Color Identity,Price (USD),Quantity,Condition,Foil,Surge,Timestamp\r\n\"Thorin, King of Durin's Folk\",The Hobbit Eternal,3,rare,Legendary Creature — Dwarf Noble,{3}{R}{W},\"R, W\",Multicolor,$6.07,1,Near Mint,No,No,2026-09-25 21:24:47\r\n\"The \"\"Quoted\"\" Card\",Test,12a,common,Instant,{U},U,Blue,$0.50,3,Lightly Played,Yes,No,2026-09-26 10:00:00\r\nSmaug,The Hobbit,109,common,Legendary Creature — Dragon,{5}{R}{R},R,Red,$0.00,2,Near Mint,No,Yes,2026-09-26 11:00:00\r\n"
+ "csv": "Card Name,Set,Set Code,Card Number,Finish,Quantity,Condition,Location,Tags,Price (USD),Rarity,Type,Mana Cost,Colors,Color Identity,Card ID,Timestamp\r\n\"Thorin, King of Durin's Folk\",The Hobbit Eternal,hoc,3,regular,1,Near Mint,,,$6.07,rare,Legendary Creature — Dwarf Noble,{3}{R}{W},\"R, W\",Multicolor,0a7b2e5c-1111-4222-8333-444455556666,2026-09-25 21:24:47\r\n\"The \"\"Quoted\"\" Card\",Test,tst,12a,foil,3,Lightly Played,,,$0.50,common,Instant,{U},U,Blue,,2026-09-26 10:00:00\r\nSmaug,The Hobbit,hob,109,surge,2,Near Mint,,,$0.00,common,Legendary Creature — Dragon,{5}{R}{R},R,Red,9f8e7d6c-aaaa-4bbb-8ccc-ddddeeeeffff,2026-09-26 11:00:00\r\n"
 }

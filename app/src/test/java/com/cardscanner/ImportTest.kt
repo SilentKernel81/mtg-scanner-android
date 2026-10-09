@@ -22,9 +22,10 @@ class ImportTest {
     @Test
     fun csvExportReadsBack() {
         assertEquals(listOf(
-            ImportRow("Thorin, King of Durin's Folk", "The Hobbit Eternal", "3", 1, "Near Mint", Finish.REGULAR, "2026-09-26 10:00:00"),
-            ImportRow("The \"Quoted\" Card", "Test Set", "12a", 3, "Lightly Played", Finish.FOIL, "2026-09-26 10:00:00"),
-            ImportRow("Smaug", "The Hobbit", "109", 2, "Damaged", Finish.SURGE, "2026-09-26 10:00:00"),
+            // The export carries the set code, which the import prefers to the set's name
+            ImportRow("Thorin, King of Durin's Folk", "hoc", "3", 1, "Near Mint", Finish.REGULAR, "2026-09-26 10:00:00"),
+            ImportRow("The \"Quoted\" Card", "tst", "12a", 3, "Lightly Played", Finish.FOIL, "2026-09-26 10:00:00"),
+            ImportRow("Smaug", "hob", "109", 2, "Damaged", Finish.SURGE, "2026-09-26 10:00:00"),
         ), parseInventoryCsv(writeCsv(entries)))
     }
 

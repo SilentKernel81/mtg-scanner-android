@@ -13,14 +13,19 @@ enum class ExportFormat(val label: String, val filePrefix: String) {
     }
 }
 
-/** Same columns as the Python scanner's CSV export (games/mtg.py: CSV_COLUMNS, which import_csv reads back) */
+/**
+ * The scanner server's collection CSV (scanner-server games/base.py: COLLECTION_COLUMNS,
+ * write_collection_csv - byte for byte, ExportParityTest), which its collection page imports:
+ * with Card ID and Set Code an entry arrives there as the printing it is. This app has no
+ * locations or tags, so those two columns are empty.
+ */
 fun writeCsv(entries: List<InventoryEntry>): String = csv(
-    listOf("Card Name", "Set", "Card Number", "Rarity", "Type", "Mana Cost", "Colors", "Color Identity",
-        "Price (USD)", "Quantity", "Condition", "Foil", "Surge", "Timestamp"),
+    listOf("Card Name", "Set", "Set Code", "Card Number", "Finish", "Quantity", "Condition", "Location", "Tags",
+        "Price (USD)", "Rarity", "Type", "Mana Cost", "Colors", "Color Identity", "Card ID", "Timestamp"),
     entries.map {
-        listOf(it.name, it.setName, it.number, it.rarity, it.typeLine, it.manaCost, it.colors, it.colorIdentity,
-            "$" + String.format(Locale.US, "%.2f", it.priceUsd), it.quantity.toString(), it.condition,
-            if (it.finish == Finish.FOIL) "Yes" else "No", if (it.finish == Finish.SURGE) "Yes" else "No", it.timestamp)
+        listOf(it.name, it.setName, it.setCode.lowercase(), it.number, it.finish.key, it.quantity.toString(), it.condition,
+            "", "", "$" + String.format(Locale.US, "%.2f", it.priceUsd), it.rarity, it.typeLine, it.manaCost, it.colors,
+            it.colorIdentity, it.cardId.orEmpty(), it.timestamp)
     })
 
 /**
