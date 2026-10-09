@@ -42,9 +42,10 @@ data class InventoryEntry(
 )
 
 /**
- * The card inventory, in a SQLite database in the app's storage - the same table as the Python
- * scanner's (inventory.py: INVENTORY_TABLE, merged on game + name + set + number + condition +
- * finish), plus the Scryfall image. Magic only for now (game = 'mtg').
+ * The phone's own card inventory (standalone mode), in a SQLite database in the app's storage -
+ * the same table as the scanner server's (inventory.py: INVENTORY_TABLE, merged on game + name +
+ * set + number + condition + finish), plus the Scryfall image. Magic only for now (game = 'mtg').
+ * Client mode never writes here: those cards are the server's.
  */
 class Inventory(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 1) {
 

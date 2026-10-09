@@ -39,8 +39,10 @@ data class Printing(
 }
 
 /**
- * Finds the exact printing on the Scryfall API - the online counterpart of
- * database.py:search_card_exact (the app has no local card database yet).
+ * Finds the exact printing - the counterpart of database.py:search_card_exact. With the offline
+ * card data downloaded (`local`: CardDatabase) lookups are answered from it; without it, or for
+ * what it doesn't have, from the Scryfall API. Standalone mode only: in client mode the server
+ * does this.
  *
  * Order: set code + collector number (checked against the name), name + collector number,
  * name + set, name only. Results are tagged like the Python search (`match`).

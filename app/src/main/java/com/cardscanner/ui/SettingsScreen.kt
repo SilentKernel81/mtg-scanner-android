@@ -46,6 +46,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Settings, saved as they are changed. The scanner server section comes first: with client mode
+ * on, the sections that only matter when the phone reads the cards itself (vision AI, offline
+ * card data, foil check, automatic adds) are hidden - the server decides those.
+ */
 @Composable
 fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()

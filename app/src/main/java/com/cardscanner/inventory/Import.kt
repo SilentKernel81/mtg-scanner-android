@@ -14,9 +14,11 @@ data class ImportRow(
 )
 
 /**
- * Read an inventory CSV: this app's / the Python scanner's export (Card Name, Set, Card Number,
- * Quantity, Condition, Foil, Surge - or a Finish column), or Moxfield's (Count, Name,
- * Edition / Set Code, Collector Number, Condition, Foil). Columns are found by name.
+ * Read an inventory CSV: this app's export, which is the scanner server's collection CSV (Card
+ * Name, Set, Set Code, Card Number, Finish, Quantity, Condition, ...), the older form of it (Foil
+ * and Surge columns in place of Finish, no Set Code), or Moxfield's (Count, Name, Edition,
+ * Collector Number, Condition, Foil). Columns are found by name; a set code is preferred to a
+ * set name, since the printing is then looked up by set + number.
  * Throws IllegalArgumentException for a file in neither format.
  */
 fun parseInventoryCsv(text: String): List<ImportRow> {

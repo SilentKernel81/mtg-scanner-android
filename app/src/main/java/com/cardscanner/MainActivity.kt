@@ -46,6 +46,11 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.cardscanner.scryfall.Scryfall
 import okhttp3.OkHttpClient
 
+/**
+ * The one activity: asks for the camera, then shows the scanner screen and, from it, Settings,
+ * the inventory and the review queue (plain state, no navigation library). Also where the image
+ * loader for Scryfall's card images gets the User-Agent Scryfall requires.
+ */
 class MainActivity : ComponentActivity() {
     private val viewModel: ScannerViewModel by viewModels()
 

@@ -27,7 +27,9 @@ data class ReviewItem(
 }
 
 /**
- * Cards to review (review.py): while adding automatically, anything uncertain - printing not
+ * Cards to review in standalone mode (review.py on the server is its counterpart, and has its
+ * own queue for the cards a phone sends in client mode): while adding automatically, anything
+ * uncertain - printing not
  * confirmed, not found, nothing read - is queued with a copy of its photo, and scanning goes on.
  * Oldest first; kept across restarts.
  */

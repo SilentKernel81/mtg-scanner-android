@@ -17,8 +17,9 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * Card detection by outline - a port of object_detector.py (find_card_outline, warp_card and
- * helpers). Thresholds are the ones measured for the Python scanner; keep both in step.
+ * Card detection by outline - a port of object_detector.py in the scanner server's repository
+ * (find_card_outline, warp_card and helpers). Thresholds are the ones measured for the Python
+ * scanner; keep both in step (OutlineParityTest compares the two on recorded frames).
  */
 
 /** Magic card aspect ratio: 88mm / 63mm */

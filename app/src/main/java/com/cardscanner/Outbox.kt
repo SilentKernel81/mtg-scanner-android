@@ -11,7 +11,7 @@ import java.util.UUID
  * Captures that are not settled yet, kept in the app's storage: a capture is saved here before
  * anything else happens to it and removed once it is identified (standalone) or the server has
  * answered (client mode). Without a network it waits here - also while the app is closed - and
- * is taken up again when the app starts (ScannerViewModel.resumeOutbox).
+ * is taken up again when the app starts (the init block of ScannerViewModel that reads `all()`).
  *
  * files/outbox/<capture id>.jpg (the photo), <capture id>_foil.jpg (the flat card for the ★/•
  * check, when that is another picture) and <capture id>.json, written last: a capture without

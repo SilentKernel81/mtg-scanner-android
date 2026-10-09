@@ -95,6 +95,12 @@ import com.cardscanner.ScannerViewModel
 import com.cardscanner.detection.CardTracker
 import android.widget.Toast
 
+/**
+ * The main screen: the camera with the detected outline (or the fixed area) and a status chip,
+ * the capture controls, and the list of captures with what became of each - a card identified
+ * here (ScanRow) or the scanner server's answer (ServerScanRow). In client mode the inventory and
+ * review buttons give way to a link to the phone's page on the server.
+ */
 @Composable
 fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInventory: () -> Unit, onReview: () -> Unit) {
     val detection by viewModel.detection.collectAsStateWithLifecycle()

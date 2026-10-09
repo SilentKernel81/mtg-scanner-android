@@ -3,7 +3,11 @@ package com.cardscanner
 import android.content.Context
 import com.cardscanner.ai.Provider
 
-/** User settings (SharedPreferences, private to the app) */
+/**
+ * User settings (SharedPreferences, private to the app), saved on every change. The first group
+ * is for standalone scanning (the AI, the foil check, automatic adds), the capture thresholds and
+ * the fixed area apply to both modes, and the last group is client mode.
+ */
 data class AppSettings(
     val provider: Provider = Provider.GEMINI,
     val models: Map<Provider, String> = emptyMap(),

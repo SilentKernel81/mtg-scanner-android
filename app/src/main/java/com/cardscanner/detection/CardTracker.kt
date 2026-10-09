@@ -15,8 +15,11 @@ import kotlin.math.max
  * scanner.py:_capture_frames (_is_card_settled, _new_card_arrived, _outline_flicker,
  * _mark_captured). The phone's own continuous autofocus replaces the focus sweep / probe.
  *
- * The thresholds were measured on the Raspberry Pi webcam (camera noise, live drop tests);
- * re-measure them on phones before tuning - `metrics` shows the live values.
+ * The thresholds were measured with the Python scanner's USB webcam (camera noise, live drop
+ * tests); re-measure them on phones before tuning - `metrics` shows the live values.
+ *
+ * Used in both modes: what a capture is and when it happens is the phone's decision, whether the
+ * card is then read here or by a scanner server.
  */
 class CardTracker(
     var requiredStableFrames: Int = 5,

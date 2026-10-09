@@ -80,6 +80,18 @@ data class ScanResult(
     enum class Status { IDENTIFYING, DONE, FAILED }
 }
 
+/**
+ * Everything behind the screens: the camera frames (analyze -> CardTracker), taking a capture,
+ * and what becomes of it.
+ *
+ * A capture's way (see `process`): saved in the outbox, then - whichever the app is set to at
+ * that moment - sent to the scanner server (client mode, `sendOnce`) or identified here
+ * (standalone, `identifyOnce`: AI, printing match, inventory or review queue). Without a network
+ * it waits in the outbox and is tried again; it leaves the outbox only once it is settled.
+ *
+ * The standalone side also owns the phone's inventory, review queue, CSV import / export and the
+ * offline card data. Client mode touches none of them.
+ */
 class ScannerViewModel(application: Application) : AndroidViewModel(application) {
     private val http = CardIdentifier.httpClient()
     private val cardData = com.cardscanner.scryfall.CardDatabase(application, http)
