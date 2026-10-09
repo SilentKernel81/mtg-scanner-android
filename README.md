@@ -6,9 +6,12 @@ has a vision AI read name / collector number / set code / ★• foil marker, fi
 printing (offline card data or the Scryfall API) and keeps an inventory with CSV / Moxfield
 export and import. Uncertain cards wait in a review queue.
 
-Ported from the desktop scanner (Python / Flask, repository
-[SilentKernel81/scanner](https://github.com/SilentKernel81/scanner)) - keep both in step. The Python
-paths below are in that repository:
+Ported from the Python scanner - keep both in step. The Python side is the scanner server
+(Python / Flask, repository [SilentKernel81/scanner-server](https://github.com/SilentKernel81/scanner-server),
+checked out as `../scanner-server`), which is also what the app talks to in client mode; the Python
+paths below are in that repository. (The desktop scanner the port started from,
+[SilentKernel81/scanner](https://github.com/SilentKernel81/scanner), has the same detection code and
+is a separate project.)
 
 | Android | Python |
 |---|---|
@@ -85,8 +88,8 @@ key, or the local server address (`http://<host>:11434` for Ollama; "Test / list
 - `./gradlew testDebugUnitTest` - AI answer parser and name similarity against the Python
   results (`app/src/test/resources/parser_reference.json`, made by `parser_reference.py`); CSV
   export against `write_csv` (`export_reference.json`, made by `export_reference.py`); CSV import
-  (`ImportTest`: round trips, Moxfield's own export). The reference scripts run in the desktop
-  scanner's checkout with its venv, e.g. from there:
+  (`ImportTest`: round trips, Moxfield's own export). The reference scripts run in the scanner
+  server's checkout (`../scanner-server`) with its venv, e.g. from there:
   `venv/bin/python ../mtg-scanner-android/app/src/test/resources/export_reference.py ../mtg-scanner-android/app/src/test/resources/export_reference.json`
 - `OfflineFindTest` (instrumented; card data downloaded + internet) - offline lookups against the
   API. 2026-09-26: every set + number / name + number read gave the same printing and tag; only
@@ -96,8 +99,8 @@ key, or the local server address (`http://<host>:11434` for Ollama; "Test / list
   `./gradlew assembleDebugAndroidTest -PdebugFrames=<dir containing frames/>`, install both
   APKs, `adb shell am instrument -w -e class com.cardscanner.OutlineParityTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`,
   then `adb pull /sdcard/Android/data/com.cardscanner/files/outlines.json`.
-  (Measured 2026-09-26 on 400 frames of the desktop scanner's data/debug_frames: same detections
-  as Python, corners within 0.6 px.)
+  (Measured 2026-09-26 on 400 frames of the desktop scanner's data/debug_frames - the server has
+  the same `find_card_outline`: same detections as Python, corners within 0.6 px.)
 - `PipelineTest` (instrumented) - card images (assets `cards/`) -> local AI -> Scryfall:
   `-e aiUrl http://host:11434 -e aiModel <model>`; writes `pipeline.json`.
 

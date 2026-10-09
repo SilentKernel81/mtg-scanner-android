@@ -11,11 +11,14 @@ collector number, set code and the ★/• foil marker, the printing is matched 
 or the Scryfall API) and the card goes into an inventory - or, if uncertain, into a review queue.
 Magic only (no Pokémon).
 
-It is a port of the desktop scanner (Python / Flask), repository
-[SilentKernel81/scanner](https://github.com/SilentKernel81/scanner), checked out beside this one
-(`../scanner`). **README.md maps each Kotlin file to the Python code it ports** - when changing
-detection, auto-capture, prompts / answer parsing, matching or the CSV formats, check the Python
-side and keep both in step (the thresholds were measured there; see its PROGRAM_DOCUMENTATION.md).
+It is a port of the Python scanner. Its Python side is the scanner server, repository
+[SilentKernel81/scanner-server](https://github.com/SilentKernel81/scanner-server), checked out
+beside this one (`../scanner-server`) - also the server this app sends its captures to in client
+mode. **README.md maps each Kotlin file to the Python code it ports** - when changing detection,
+auto-capture, prompts / answer parsing, matching or the CSV formats, check the Python side and
+keep both in step (the thresholds were measured there; see its PROGRAM_DOCUMENTATION.md).
+The desktop scanner the port started from ([SilentKernel81/scanner](https://github.com/SilentKernel81/scanner),
+`../scanner`) is a separate project with the same detection code; it is not changed from here.
 
 ## Common Commands
 
@@ -35,9 +38,11 @@ minSdk 26, ABIs arm64-v8a + x86_64. `local.properties` (sdk.dir) is not in git. 
 ## Testing
 
 - **Unit tests** (`app/src/test`): answer parser and name similarity (`ParserParityTest`), CSV
-  export byte-identical to the Python `write_csv` (`ExportParityTest`), CSV import (`ImportTest`).
-  Reference JSON files are made by the `*_reference.py` scripts in `app/src/test/resources`, run
-  from `../scanner` with its venv.
+  export byte-identical to the server's `write_collection_csv` (`ExportParityTest`), CSV import
+  (`ImportTest`), the server's answers in client mode (`ServerOutcomeTest`). Reference JSON files
+  are made by the `*_reference.py` scripts in `app/src/test/resources`, run from
+  `../scanner-server` with its venv (`parser_reference.py` prints its JSON, `export_reference.py`
+  writes the file named on its command line).
 - **Instrumented tests** (`app/src/androidTest`): run them with `adb shell am instrument -w -e class
   com.cardscanner.<Test> com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner` after
   installing both APKs (`assembleDebug assembleDebugAndroidTest`) - **not** `connectedDebugAndroidTest`,
