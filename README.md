@@ -167,7 +167,7 @@ first, which removes the app's data.
 | Client mode without a network, app killed | emulator, 2026-10-09 | Three captures reached the server once each after the network and the app were back |
 | Standalone without a network, app killed | emulator, 2026-10-09 | The capture was identified on the next start |
 | CSV export → server import | 102 entries of the emulator's inventory, 2026-10-09 | All imported, every card id found in the server's card data |
-| The release build | emulator (an x86_64 copy of it), 2026-10-09 | Starts and shows the camera screen. The downloadable arm64 file itself has not been installed on a phone |
+| The release build | the file downloaded from the releases page, on a Pixel 10, 2026-10-09 | Installs, starts and shows the camera screen ("No card"). No card has been scanned with it yet |
 
 Not done yet:
 
