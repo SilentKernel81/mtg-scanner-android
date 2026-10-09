@@ -178,3 +178,8 @@ The project's author decided what to build and how it should behave, and ran it 
 phone over a box of real cards; *What has been tried* is what came of those runs. It has been run,
 not audited: no one has reviewed the code independently, and the automated tests cover the
 parts that must match the server (the answer parser, the CSV format, the server's answers).
+
+## License
+
+[MIT](LICENSE) - free to use, modify and share, including commercially, as long as the
+copyright notice stays with it. No warranty.
