@@ -199,7 +199,7 @@ private fun ServerSection(viewModel: ScannerViewModel) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("Send cards to a scanner server")
-            Text("The phone finds and captures the cards; the server reads them and keeps the collection. Uncertain cards wait in the server's review queue. Off: this phone does everything itself, with its own inventory - which is not touched while this is on.",
+            Text("The phone finds and captures the cards; the server reads them and keeps the collection. Uncertain cards wait in the server's review queue; without a connection, captures wait on the phone and are sent when it is back. Off: this phone does everything itself, with its own inventory - which is not touched while this is on.",
                 style = MaterialTheme.typography.bodySmall)
         }
         Switch(settings.serverMode, { viewModel.updateSettings(settings.copy(serverMode = it)) })

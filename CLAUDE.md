@@ -65,6 +65,7 @@ minSdk 26, ABIs arm64-v8a + x86_64. `local.properties` (sdk.dir) is not in git. 
 | Inventory (SQLite, Python's table + merge key), exports, import | `inventory/Inventory.kt`, `inventory/Export.kt`, `inventory/Import.kt` |
 | Review queue (photo + reading + suggestion) | `inventory/ReviewQueue.kt`, `ui/ReviewScreen.kt`, printing search `ui/PrintingSearch.kt` |
 | Screens | `ui/ScannerScreen.kt` (camera, overlay, area drawing with loupe, scan list), `ui/InventoryScreen.kt`, `ui/SettingsScreen.kt` |
+| Captures kept until they are settled (no network, app closed) | `Outbox.kt`; `ScannerViewModel.kt`: `process` (the retry loop, both modes), `identifyOnce`, `sendOnce`, `isOffline`, the `init` block that resumes the outbox |
 | Settings (SharedPreferences, saved on every change) | `AppSettings.kt` |
 | Client mode: captures go to a scanner server instead of the phone's own AI / Scryfall / inventory | `server/ScannerServer.kt` (`sendCapture`, `outcome`, `undo`, `test`, `ServerOutcome.parse`); `ScannerViewModel.kt`: `sendToServer`, `serverAnswered`, `undoOnServer`; `ui/ScannerScreen.kt`: `ServerScanRow`; `ui/SettingsScreen.kt`: `ServerSection`; the server side is `app.py: station_capture` in `../scanner-server` |
 | Sound effects (the web UI's beeps) | `Sounds.kt` |

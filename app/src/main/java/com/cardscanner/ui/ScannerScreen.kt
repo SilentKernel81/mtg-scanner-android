@@ -110,6 +110,7 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
     val entries by viewModel.inventoryEntries.collectAsStateWithLifecycle()
     val review by viewModel.review.collectAsStateWithLifecycle()
     val serverUndo by viewModel.serverUndo.collectAsStateWithLifecycle()
+    val waiting by viewModel.waiting.collectAsStateWithLifecycle()
     LaunchedEffect(message) {
         message?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); viewModel.clearMessage() }
     }
@@ -196,6 +197,16 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
                 Modifier.padding(horizontal = 12.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (waiting > 1) {
+            // More than the card in hand: no network, or a queue (captures are kept until they are settled)
+            Text("$waiting captures waiting " + (if (settings.serverMode) "for the server" else "to be identified") +
+                    " - they are kept, also if the app is closed",
+                Modifier.padding(horizontal = 12.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.tertiary,
             )
         }
 

@@ -171,6 +171,28 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     var imageCapture: ImageCapture? = null
 
+    /** Captures not settled yet, on disk: they wait for the network, also across a restart */
+    private val outbox = Outbox(application)
+
+    /** How many captures are waiting (no network, or the server / AI is still busy with them) */
+    private val _waiting = MutableStateFlow(0)
+    val waiting: StateFlow<Int> = _waiting.asStateFlow()
+
+    init {
+        // Captures that were still waiting when the app was closed
+        viewModelScope.launch(Dispatchers.IO) {
+            val items = outbox.all()
+            _waiting.value = items.size
+            if (items.isEmpty()) return@launch
+            Log.i(TAG, "${items.size} capture(s) waiting from before")
+            for (item in items) {
+                val photo = item.card()
+                if (photo == null) { outbox.remove(item); continue }
+                process(showScan(photo), null, null, item)
+            }
+        }
+    }
+
     fun updateSettings(newSettings: AppSettings) {
         var settings = newSettings
         if (settings.rotation != _settings.value.rotation) {
@@ -521,67 +543,123 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     // Identification
     // ------------------------------------------------------------------------
 
+    /** A capture: shown in the list, saved in the outbox and processed (see process) */
     private fun identify(card: Bitmap, foilCard: Bitmap?) {
+        val id = showScan(card)
+        Log.i(TAG, "Capture #$id: ${card.width}x${card.height}" + if (foilCard == null) " (no outline: no foil check)" else "")
+        process(id, card, foilCard, null)
+    }
+
+    /** Put a capture at the top of the list; returns its id there */
+    private fun showScan(card: Bitmap): Long {
         val thumbHeight = 280
         val thumbnail = Bitmap.createScaledBitmap(card, thumbHeight * card.width / card.height, thumbHeight, true)
         val id = nextId.incrementAndGet()
-        val toServer = _settings.value.serverMode
-        _scans.update { (listOf(ScanResult(id, thumbnail, note = if (toServer) "Sending to the server…" else null)) + it).take(MAX_SCANS) }
-        Log.i(TAG, "Capture #$id: ${card.width}x${card.height}" + if (foilCard == null) " (no outline: no foil check)" else "")
-        if (toServer) {
-            // Client mode: the server reads the card, finds the printing and keeps the collection
-            sendToServer(id, card, foilCard)
-            return
-        }
+        val note = if (_settings.value.serverMode) "Sending to the server…" else null
+        _scans.update { (listOf(ScanResult(id, thumbnail, note = note)) + it).take(MAX_SCANS) }
+        return id
+    }
 
-        viewModelScope.launch(aiDispatcher) {
-            val start = System.nanoTime()
-            lateinit var reading: CardReading
-            var marker = Foil.UNKNOWN
-            val settings = _settings.value
-            val result = try {
-                val identifier = identifier()
-                val (answer, read) = identifier.identify(card)
-                if (read == null) {
-                    val error = "The AI could not read the card" + (if (answer.isNotBlank()) ": \"${answer.take(120)}\"" else "")
-                    fail(id, error)
-                    if (settings.autoAdd) queueForReview(id, card, null, Foil.UNKNOWN, null, "The AI could not read the card")
-                    return@launch
-                }
-                reading = read
-                // The ★/• corner is only at a known place on the flat, tightly cropped card
-                marker = if (settings.detectFoil && foilCard != null) identifier.readFoilSymbol(foilCard) else Foil.UNKNOWN
-                val printing = scryfall.find(reading.name, reading.collectorNumber, reading.setCode)
-                val (foil, reason) = finish(printing, marker)
-                ScanResult(id, thumbnail, ScanResult.Status.DONE, reading, printing, foil, reason,
-                    seconds = (System.nanoTime() - start) / 1e9, usage = identifier.usage,
-                    error = if (printing == null) "Not found on Scryfall" else null)
+    /**
+     * See a capture through: sent to the server (client mode) or identified here (standalone) -
+     * whichever the app is set to when its turn comes. It is saved in the outbox first and stays
+     * there until it is settled; while there is no network it is tried again (2 s, 4 s, ... 30 s
+     * apart), and after a restart it starts over from the outbox (`saved`, without bitmaps).
+     */
+    private fun process(id: Long, firstCard: Bitmap?, firstFoil: Bitmap?, saved: Outbox.Item?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var card = firstCard
+            var foil = firstFoil
+            val item = saved ?: try {
+                outbox.add(card!!, foil)
             } catch (e: Exception) {
-                Log.e(TAG, "Identification failed", e)
-                fail(id, e.message ?: e.toString())
-                // Not lost: the photo waits in the queue (a network or quota error, say)
-                if (settings.autoAdd) queueForReview(id, card, null, marker, null, "Identification failed: ${e.message?.take(80)}")
-                return@launch
+                Log.e(TAG, "Capture #$id could not be saved - it is processed, but not kept if that fails", e)
+                null
             }
-            Log.i(TAG, "Identified #$id: ${reading.name} #${reading.collectorNumber} [${reading.setCode}] -> " +
-                (result.printing?.let { "${it.name} ${it.setCode} #${it.collectorNumber} (${it.match})" } ?: "not found") +
-                " foil=${result.foil} in %.1f s".format(result.seconds) +
-                " - ${settings.provider.id}/${settings.model()} tokens ${result.usage}")
-            // Confirmed printings go into the inventory right away (the Python scanner's auto_add);
-            // anything uncertain goes to the review queue and scanning goes on. With automatic
-            // adds off, every card waits for Add in the list.
-            val added = if (settings.autoAdd && result.printing?.confirmed == true) inventory.add(result.printing, result.finish) else null
-            _scans.update { list -> list.map { if (it.id == id) result.copy(inventoryId = added) else it } }
-            if (added != null) {
-                _inventoryEntries.value = inventory.all()
-                if (settings.sounds) Sounds.added()
+            _waiting.value = outbox.count()
+            val captureId = item?.captureId ?: java.util.UUID.randomUUID().toString()
+            val start = System.nanoTime()
+            var wait = 2_000L
+            while (true) {
+                val photo = card ?: item?.card()
+                if (photo == null) { fail(id, "The saved capture is gone"); break }
+                val foilPhoto = if (card != null) foil else item!!.foil(photo)
+                val settled =
+                    if (_settings.value.serverMode) kotlinx.coroutines.withContext(serverDispatcher) { sendOnce(id, photo, foilPhoto, captureId, start) }
+                    else kotlinx.coroutines.withContext(aiDispatcher) { identifyOnce(id, photo, foilPhoto, start) }
+                if (settled) break
+                // Waiting for the network: the pictures are on disk, not kept in memory meanwhile
+                if (item != null) { card = null; foil = null }
+                kotlinx.coroutines.delay(wait)
+                wait = minOf(wait * 2, 30_000L)
             }
-            if (settings.autoAdd && added == null) {
-                val why = result.printing?.let { "Check: matched by ${it.match.replace('_', ' ')}" } ?: "Not found on Scryfall"
-                queueForReview(id, card, reading, marker, result.printing, why)
-            }
+            item?.let { outbox.remove(it) }
+            _waiting.value = outbox.count()
         }
     }
+
+    /**
+     * Standalone: identify a capture and add it, queue it for review or leave it for Add.
+     * False when there is no network (nothing happened to it - try again), else true.
+     */
+    private fun identifyOnce(id: Long, card: Bitmap, foilCard: Bitmap?, start: Long): Boolean {
+        val thumbnail = _scans.value.firstOrNull { it.id == id }?.thumbnail ?: emptyBitmap
+        lateinit var reading: CardReading
+        var marker = Foil.UNKNOWN
+        val settings = _settings.value
+        val result = try {
+            val identifier = identifier()
+            val (answer, read) = identifier.identify(card)
+            if (read == null) {
+                val error = "The AI could not read the card" + (if (answer.isNotBlank()) ": \"${answer.take(120)}\"" else "")
+                fail(id, error)
+                if (settings.autoAdd) queueForReview(id, card, null, Foil.UNKNOWN, null, "The AI could not read the card")
+                return true
+            }
+            reading = read
+            // The ★/• corner is only at a known place on the flat, tightly cropped card
+            marker = if (settings.detectFoil && foilCard != null) identifier.readFoilSymbol(foilCard) else Foil.UNKNOWN
+            val printing = scryfall.find(reading.name, reading.collectorNumber, reading.setCode)
+            val (foil, reason) = finish(printing, marker)
+            ScanResult(id, thumbnail, ScanResult.Status.DONE, reading, printing, foil, reason,
+                seconds = (System.nanoTime() - start) / 1e9, usage = identifier.usage,
+                error = if (printing == null) "Not found on Scryfall" else null)
+        } catch (e: Exception) {
+            if (isOffline(e)) {
+                // The AI or Scryfall can't be reached: the capture waits in the outbox
+                Log.w(TAG, "Capture #$id not identified (${e.message}) - waiting for the network")
+                note(id, "No network - waiting to identify…")
+                return false
+            }
+            Log.e(TAG, "Identification failed", e)
+            fail(id, e.message ?: e.toString())
+            // Not lost: the photo waits in the review queue (a wrong key or a quota error, say)
+            if (settings.autoAdd) queueForReview(id, card, null, marker, null, "Identification failed: ${e.message?.take(80)}")
+            return true
+        }
+        Log.i(TAG, "Identified #$id: ${reading.name} #${reading.collectorNumber} [${reading.setCode}] -> " +
+            (result.printing?.let { "${it.name} ${it.setCode} #${it.collectorNumber} (${it.match})" } ?: "not found") +
+            " foil=${result.foil} in %.1f s".format(result.seconds) +
+            " - ${settings.provider.id}/${settings.model()} tokens ${result.usage}")
+        // Confirmed printings go into the inventory right away (the Python scanner's auto_add);
+        // anything uncertain goes to the review queue and scanning goes on. With automatic
+        // adds off, every card waits for Add in the list.
+        val added = if (settings.autoAdd && result.printing?.confirmed == true) inventory.add(result.printing, result.finish) else null
+        _scans.update { list -> list.map { if (it.id == id) result.copy(inventoryId = added) else it } }
+        if (added != null) {
+            _inventoryEntries.value = inventory.all()
+            if (settings.sounds) Sounds.added()
+        }
+        if (settings.autoAdd && added == null) {
+            val why = result.printing?.let { "Check: matched by ${it.match.replace('_', ' ')}" } ?: "Not found on Scryfall"
+            queueForReview(id, card, reading, marker, result.printing, why)
+        }
+        return true
+    }
+
+    /** No connection to whatever was asked (as opposed to an answer that is an error) */
+    private fun isOffline(e: Exception) = e is java.net.UnknownHostException || e is java.net.SocketException ||
+        e is java.net.SocketTimeoutException || e is javax.net.ssl.SSLException
 
     // ------------------------------------------------------------------------
     // Client mode: the scanner server does the rest
@@ -604,47 +682,31 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val serverUndo: StateFlow<Long?> = _serverUndo.asStateFlow()
 
     /**
-     * Send a capture to the server and show what became of it. A capture that can't be sent
-     * (server down, no Wi-Fi) is tried again until it is - under the same capture id, so it is
-     * one card however often it is sent.
+     * Client mode: send a capture to the server and show what became of it. False when the
+     * server can't be reached (try again - under the same capture id it is one card however often
+     * it is sent), else true.
      */
-    private fun sendToServer(id: Long, card: Bitmap, foilCard: Bitmap?) {
-        val captureId = java.util.UUID.randomUUID().toString()
-        viewModelScope.launch(serverDispatcher) {
-            val start = System.nanoTime()
-            var wait = 2_000L
-            while (true) {
-                if (!_settings.value.serverMode) { fail(id, "Not sent: client mode was switched off"); return@launch }
-                try {
-                    val server = server()
-                    var outcome = server.sendCapture(card, foilCard, captureId)
-                    // Still being read after the wait (a long AI queue): ask until it is settled
-                    var asked = 0
-                    while (outcome.status == ServerOutcome.Status.PENDING && outcome.capture != null && asked++ < 90) {
-                        note(id, "The server is reading it…")
-                        kotlinx.coroutines.delay(2_000)
-                        outcome = server.outcome(outcome.capture)
-                    }
-                    serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9)
-                    return@launch
-                } catch (e: ServerRefused) {
-                    Log.e(TAG, "The server refused capture #$id: ${e.message}")
-                    fail(id, "Server: ${e.message}")
-                    return@launch
-                } catch (e: java.io.IOException) {
-                    Log.w(TAG, "Capture #$id not sent (${e.message}) - trying again in ${wait / 1000} s")
-                    note(id, "Server not reachable - trying again…")
-                    kotlinx.coroutines.delay(wait)
-                    wait = minOf(wait * 2, 15_000L)
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e(TAG, "Sending capture #$id failed", e)
-                    fail(id, e.message ?: e.toString())
-                    return@launch
-                }
+    private suspend fun sendOnce(id: Long, card: Bitmap, foilCard: Bitmap?, captureId: String, start: Long): Boolean {
+        try {
+            val server = server()
+            var outcome = server.sendCapture(card, foilCard, captureId)
+            // Still being read after the wait (a long AI queue): ask until it is settled
+            var asked = 0
+            while (outcome.status == ServerOutcome.Status.PENDING && outcome.capture != null && asked++ < 90) {
+                note(id, "The server is reading it…")
+                kotlinx.coroutines.delay(2_000)
+                outcome = server.outcome(outcome.capture)
             }
+            serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9)
+        } catch (e: ServerRefused) {
+            Log.e(TAG, "The server refused capture #$id: ${e.message}")
+            fail(id, "Server: ${e.message}")
+        } catch (e: java.io.IOException) {
+            Log.w(TAG, "Capture #$id not sent (${e.message}) - waiting for the server")
+            note(id, "Server not reachable - waiting to send…")
+            return false
         }
+        return true
     }
 
     private fun note(id: Long, text: String) {

@@ -35,15 +35,37 @@ not touched while client mode is on; *Cards and review on the server* opens the 
 there (`/scan/<station id>`).
 
 - The station id is made once (`phone-xxxxxxxx`) and kept; the name defaults to the phone's model.
-- A capture that can't be sent (server down, no Wi-Fi) is tried again until it is, under the
-  same capture id - one card however often it is sent. It waits in memory: closing the app
-  loses captures not sent yet.
+- A capture that can't be sent (server down, no Wi-Fi) waits on the phone and is sent when the
+  server is back, under the same capture id - one card however often it is sent (see
+  [Without a network](#without-a-network)).
 - Tested 2026-10-09 on the emulator against the server in Docker: a capture answered in 1.1 s
   (queued for review: the emulator's camera shows no card), a capture made with the network
   off sent once when it was back, *Test connection*. On the Pixel 10 over the box: a card
   captured by hand, added on the server by its OCR in 0.6 s, and taken back with Undo; the
   phone's own inventory file unchanged. Not tested yet: auto-capture card after card in client
   mode, and a fixed-area capture (which sends a second picture for the foil check).
+
+## Without a network
+
+Scanning goes on without a network, in both modes. Every capture is saved in the app's storage
+first (`Outbox.kt`: `files/outbox/`, the photo and - in fixed-area mode - the flat card for the
+foil check) and removed once it is settled: the server has answered (client mode), or the card
+is identified - added, in the review queue, or waiting for Add (standalone). Until then
+`ScannerViewModel.process` tries again 2 s, 4 s, ... 30 s apart, and after the app was closed
+it starts over from the outbox when the app is opened again.
+
+- While they wait the list shows "Server not reachable - waiting to send…" / "No network -
+  waiting to identify…", and a line above it counts the waiting captures. There is no card name
+  and no "added" sound until the network is back - a wrong capture is only noticed then.
+- Standalone: only a missing connection makes a capture wait (no route, no DNS, a timeout). An
+  answer that is an error - a wrong key, a used-up quota - still sends it to the review queue
+  with its photo, as before.
+- A waiting capture is processed by whatever the app is set to when its turn comes: switch to
+  client mode and the captures made standalone go to the server, and the other way round.
+- Tested 2026-10-09 on the emulator: client mode - three captures with the network off, the app
+  killed, network back, app opened: all three reached the server once and the outbox was empty;
+  standalone - one capture with the network off, the app killed, network back: identified on
+  the next start (to the review queue: the emulator's camera shows no card).
 
 ## Build and install
 
