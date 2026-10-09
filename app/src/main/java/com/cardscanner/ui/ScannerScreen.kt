@@ -109,6 +109,7 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
 
     val entries by viewModel.inventoryEntries.collectAsStateWithLifecycle()
     val review by viewModel.review.collectAsStateWithLifecycle()
+    val serverUndo by viewModel.serverUndo.collectAsStateWithLifecycle()
     LaunchedEffect(message) {
         message?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); viewModel.clearMessage() }
     }
@@ -167,14 +168,23 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
             if (scans.isNotEmpty()) {
                 IconButton(onClick = viewModel::clearScans) { Icon(Icons.Default.DeleteSweep, "Clear the list") }
             }
-            if (review.isNotEmpty()) {
-                TextButton(onClick = onReview) {
-                    Text("Review ${review.size}", color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
+            if (settings.serverMode) {
+                // Client mode: the cards and the review queue are the server's - this phone's page there
+                TextButton(onClick = {
+                    val url = viewModel.serverPageUrl
+                    if (url == null) Toast.makeText(context, "Set the server address in Settings", Toast.LENGTH_SHORT).show()
+                    else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }) { Text("Cards and review on the server", maxLines = 1) }
+            } else {
+                if (review.isNotEmpty()) {
+                    TextButton(onClick = onReview) {
+                        Text("Review ${review.size}", color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
+                    }
                 }
-            }
-            TextButton(onClick = onInventory) {
-                Icon(Icons.Default.Inventory2, null, Modifier.size(18.dp))
-                Text("${entries.sumOf { it.quantity }}", Modifier.padding(start = 4.dp), maxLines = 1)
+                TextButton(onClick = onInventory) {
+                    Icon(Icons.Default.Inventory2, null, Modifier.size(18.dp))
+                    Text("${entries.sumOf { it.quantity }}", Modifier.padding(start = 4.dp), maxLines = 1)
+                }
             }
         }
         detection?.metrics?.let {
@@ -194,7 +204,10 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
         val listState = rememberLazyListState()
         LaunchedEffect(scans.firstOrNull()?.id) { if (scans.isNotEmpty()) listState.animateScrollToItem(0) }
         LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(top = 4.dp), state = listState) {
-            items(scans, key = { it.id }) { ScanRow(it, onAdd = { viewModel.addScan(it.id) }, onUndo = { viewModel.undoScan(it.id) }) }
+            items(scans, key = { it.id }) {
+                if (it.server != null) ServerScanRow(it, canUndo = it.id == serverUndo, onUndo = viewModel::undoOnServer)
+                else ScanRow(it, onAdd = { viewModel.addScan(it.id) }, onUndo = { viewModel.undoScan(it.id) })
+            }
         }
     }
     }
@@ -326,7 +339,7 @@ private fun ScanRow(scan: ScanResult, onAdd: () -> Unit, onUndo: () -> Unit) {
             when (scan.status) {
                 ScanResult.Status.IDENTIFYING -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text("Identifying…", Modifier.padding(start = 8.dp))
+                    Text(scan.note ?: "Identifying…", Modifier.padding(start = 8.dp))
                 }
                 ScanResult.Status.FAILED -> {
                     Text(scan.error ?: "Failed", color = MaterialTheme.colorScheme.error)
@@ -379,6 +392,41 @@ private fun ScanRow(scan: ScanResult, onAdd: () -> Unit, onUndo: () -> Unit) {
                     )
                 }
             }
+        }
+    }
+}
+
+/** Client mode: a card as the server answered - added to its scanned cards, or in its review queue */
+@Composable
+private fun ServerScanRow(scan: ScanResult, canUndo: Boolean, onUndo: () -> Unit) {
+    val outcome = scan.server ?: return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(4.dp)))
+        Column(Modifier.weight(1f)) {
+            val card = outcome.card
+            Text(card?.name ?: outcome.readName.ifEmpty { "Not read" }, fontWeight = FontWeight.SemiBold)
+            if (card != null) {
+                Text("${card.set} #${card.number} · ${card.finish}", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (scan.undone) {
+                        Text("Taken back", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = Color(0xFF00C853))
+                        Text("Added on the server", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.bodySmall)
+                        if (canUndo) TextButton(onClick = onUndo) { Text("Undo") }
+                    }
+                }
+            } else {
+                Text("In the server's review queue: ${outcome.reason ?: "not confirmed"}",
+                    color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                (outcome.reader?.let { "Read by $it: " } ?: "Read: ") +
+                    "${outcome.readName.ifEmpty { "?" }} #${outcome.readNumber.ifEmpty { "?" }} [${outcome.readSet.ifEmpty { "?" }}]" +
+                    (scan.seconds?.let { " · %.1f s".format(it) } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

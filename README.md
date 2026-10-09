@@ -21,6 +21,28 @@ paths below are in that repository:
 | `inventory/Import.kt` | `inventory.py:import_csv` - reads this app's / the Python scanner's CSV and Moxfield's; cards looked up by set + number, then name (Scryfall `/cards/collection` online) |
 | `inventory/Inventory.kt`, `inventory/Export.kt` | `inventory.py` (same table and merge key; confirmed cards added automatically like `auto_add`), `games/mtg.py` (`write_csv` - byte-identical, `ExportParityTest`; Moxfield) |
 
+## Client of a scanner server
+
+The app works on its own (standalone), or as a **station** of the scanner server (the Python
+project's `app.py`, repository `scanner-server`): Settings -> *Send cards to a scanner server*,
+with the server's address. The phone still finds and captures the cards - camera, outline or
+fixed area, stillness, new-card rules, all unchanged - but each captured card is uploaded
+(`server/ScannerServer.kt` -> `POST /api/stations/<id>/captures`) and the server reads it (OCR,
+then its vision AI), finds the printing and keeps the collection. The list under the camera
+shows the server's answer: added (with Undo for the newest one), or in the server's review
+queue. The phone's own inventory, review queue, AI settings and card data are not used and
+not touched while client mode is on; *Cards and review on the server* opens the phone's page
+there (`/scan/<station id>`).
+
+- The station id is made once (`phone-xxxxxxxx`) and kept; the name defaults to the phone's model.
+- A capture that can't be sent (server down, no Wi-Fi) is tried again until it is, under the
+  same capture id - one card however often it is sent. It waits in memory: closing the app
+  loses captures not sent yet.
+- Tested 2026-10-09 on the emulator against the server in Docker: a capture answered in 1.1 s
+  (queued for review: the emulator's camera shows no card), a capture made with the network
+  off sent once when it was back, *Test connection*. Not tested yet: a real card being added
+  and Undo on a phone.
+
 ## Build and install
 
 Needs Android Studio's JDK and SDK platform 37.2.

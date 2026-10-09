@@ -28,6 +28,9 @@ import com.cardscanner.detection.scaled
 import com.cardscanner.detection.warpCard
 import com.cardscanner.scryfall.Printing
 import com.cardscanner.scryfall.Scryfall
+import com.cardscanner.server.ScannerServer
+import com.cardscanner.server.ServerOutcome
+import com.cardscanner.server.ServerRefused
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +63,12 @@ data class ScanResult(
     val inventoryId: Long? = null,
     /** The review queue item it went to (uncertain while adding automatically), or null */
     val reviewId: Long? = null,
+    /** Client mode: what the server made of the card (null in standalone mode, and until it answers) */
+    val server: ServerOutcome? = null,
+    /** Client mode: the server's add was taken back (Undo) */
+    val undone: Boolean = false,
+    /** What is going on while IDENTIFYING, when it isn't the AI ("Sending…", "Server not reachable…") */
+    val note: String? = null,
 ) {
     /** The finish it is added as: surge foil printings' foils are surge foils */
     val finish get() = when {
@@ -153,6 +162,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     private val captureExecutor = Executors.newSingleThreadExecutor()
     // One AI request at a time, in capture order
     private val aiDispatcher = Dispatchers.IO.limitedParallelism(1)
+    // Client mode: a few uploads at once (the server reads them in its own queues)
+    private val serverDispatcher = Dispatchers.IO.limitedParallelism(3)
 
     /** Taking the still image of a capture (the next auto-capture waits for it) */
     private val capturing = AtomicBoolean(false)
@@ -201,7 +212,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         _autoCapture.value = enabled
         if (enabled) {
             pendingReset = true  // the card lying there now counts as new
-            viewModelScope.launch(Dispatchers.IO) { identifier().warmUp() }
+            if (!_settings.value.serverMode) viewModelScope.launch(Dispatchers.IO) { identifier().warmUp() }
         }
     }
 
@@ -514,8 +525,14 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         val thumbHeight = 280
         val thumbnail = Bitmap.createScaledBitmap(card, thumbHeight * card.width / card.height, thumbHeight, true)
         val id = nextId.incrementAndGet()
-        _scans.update { (listOf(ScanResult(id, thumbnail)) + it).take(MAX_SCANS) }
+        val toServer = _settings.value.serverMode
+        _scans.update { (listOf(ScanResult(id, thumbnail, note = if (toServer) "Sending to the server…" else null)) + it).take(MAX_SCANS) }
         Log.i(TAG, "Capture #$id: ${card.width}x${card.height}" + if (foilCard == null) " (no outline: no foil check)" else "")
+        if (toServer) {
+            // Client mode: the server reads the card, finds the printing and keeps the collection
+            sendToServer(id, card, foilCard)
+            return
+        }
 
         viewModelScope.launch(aiDispatcher) {
             val start = System.nanoTime()
@@ -562,6 +579,106 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
             if (settings.autoAdd && added == null) {
                 val why = result.printing?.let { "Check: matched by ${it.match.replace('_', ' ')}" } ?: "Not found on Scryfall"
                 queueForReview(id, card, reading, marker, result.printing, why)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Client mode: the scanner server does the rest
+    // ------------------------------------------------------------------------
+
+    private fun server() = _settings.value.let {
+        ScannerServer(it.serverUrl, it.stationId, it.stationName.ifBlank { it.stationId }, it.stationToken, http)
+    }
+
+    /** This phone's page on the server (its cards and its review queue), or null without an address */
+    val serverPageUrl get() = server().takeIf { it.baseUrl.isNotEmpty() }?.pageUrl
+
+    /** Settings: is the server there? */
+    suspend fun testServer(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        try { server().test() } catch (e: Exception) { "Not reachable: ${e.message}" }
+    }
+
+    /** The newest card the server added for this phone and that wasn't taken back: the one Undo is for */
+    private val _serverUndo = MutableStateFlow<Long?>(null)
+    val serverUndo: StateFlow<Long?> = _serverUndo.asStateFlow()
+
+    /**
+     * Send a capture to the server and show what became of it. A capture that can't be sent
+     * (server down, no Wi-Fi) is tried again until it is - under the same capture id, so it is
+     * one card however often it is sent.
+     */
+    private fun sendToServer(id: Long, card: Bitmap, foilCard: Bitmap?) {
+        val captureId = java.util.UUID.randomUUID().toString()
+        viewModelScope.launch(serverDispatcher) {
+            val start = System.nanoTime()
+            var wait = 2_000L
+            while (true) {
+                if (!_settings.value.serverMode) { fail(id, "Not sent: client mode was switched off"); return@launch }
+                try {
+                    val server = server()
+                    var outcome = server.sendCapture(card, foilCard, captureId)
+                    // Still being read after the wait (a long AI queue): ask until it is settled
+                    var asked = 0
+                    while (outcome.status == ServerOutcome.Status.PENDING && outcome.capture != null && asked++ < 90) {
+                        note(id, "The server is reading it…")
+                        kotlinx.coroutines.delay(2_000)
+                        outcome = server.outcome(outcome.capture)
+                    }
+                    serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9)
+                    return@launch
+                } catch (e: ServerRefused) {
+                    Log.e(TAG, "The server refused capture #$id: ${e.message}")
+                    fail(id, "Server: ${e.message}")
+                    return@launch
+                } catch (e: java.io.IOException) {
+                    Log.w(TAG, "Capture #$id not sent (${e.message}) - trying again in ${wait / 1000} s")
+                    note(id, "Server not reachable - trying again…")
+                    kotlinx.coroutines.delay(wait)
+                    wait = minOf(wait * 2, 15_000L)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Sending capture #$id failed", e)
+                    fail(id, e.message ?: e.toString())
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun note(id: Long, text: String) {
+        _scans.update { list -> list.map { if (it.id == id && it.status == ScanResult.Status.IDENTIFYING) it.copy(note = text) else it } }
+    }
+
+    private fun serverAnswered(id: Long, outcome: ServerOutcome, seconds: Double) {
+        Log.i(TAG, "Server #$id: ${outcome.status} ${outcome.card?.name ?: outcome.reason ?: outcome.message.orEmpty()}" +
+            " (read by ${outcome.reader}) in %.1f s".format(seconds))
+        val reading = CardReading(outcome.readName, outcome.readNumber, outcome.readSet)
+        when (outcome.status) {
+            ServerOutcome.Status.ADDED, ServerOutcome.Status.REVIEW -> {
+                _scans.update { list -> list.map {
+                    if (it.id == id) it.copy(status = ScanResult.Status.DONE, server = outcome, reading = reading, seconds = seconds, note = null) else it
+                } }
+                if (outcome.status == ServerOutcome.Status.ADDED) _serverUndo.value = id
+                if (_settings.value.sounds) { if (outcome.status == ServerOutcome.Status.ADDED) Sounds.added() else Sounds.review() }
+            }
+            ServerOutcome.Status.PENDING -> fail(id, "The server is still reading it - see its page")
+            ServerOutcome.Status.ERROR -> fail(id, "Server: ${outcome.message ?: "error"}")
+        }
+    }
+
+    /** Take back the last card the server added for this phone (the server keeps one Undo per station) */
+    fun undoOnServer() {
+        val id = _serverUndo.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val name = server().undo()
+                if (name == null) _message.value = "Nothing to undo on the server"
+                else _scans.update { list -> list.map { if (it.id == id) it.copy(undone = true) else it } }
+                _serverUndo.value = null
+            } catch (e: Exception) {
+                _message.value = "Undo failed: ${e.message}"
             }
         }
     }

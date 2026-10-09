@@ -61,6 +61,10 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
             Text("Settings", style = MaterialTheme.typography.titleLarge)
         }
 
+        ServerSection(viewModel)
+        HorizontalDivider()
+
+        if (!settings.serverMode) {
         Text("Vision AI", style = MaterialTheme.typography.titleMedium)
         Dropdown("Provider", provider.label, Provider.entries.map { it.label }) {
             viewModel.updateSettings(settings.copy(provider = Provider.entries[it]))
@@ -143,7 +147,9 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         CardDataSection(viewModel)
 
         HorizontalDivider()
+        }  // standalone only: in client mode the server reads the cards and looks them up
         Text("Scanning", style = MaterialTheme.typography.titleMedium)
+        if (!settings.serverMode) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Foil check (★/• marker)")
@@ -158,6 +164,7 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall)
             }
             Switch(settings.autoAdd, { viewModel.updateSettings(settings.copy(autoAdd = it)) })
+        }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -176,6 +183,60 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         }
         // Every change is saved as it is made; Save just closes the page
         Button(onClick = onBack, Modifier.fillMaxWidth()) { Text("Save") }
+    }
+}
+
+/**
+ * Standalone, or client of a scanner server: the phone finds and captures the cards either way;
+ * in client mode the server reads them, finds the printing and keeps the collection
+ */
+@Composable
+private fun ServerSection(viewModel: ScannerViewModel) {
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<String?>(null) }
+    Text("Scanner server", style = MaterialTheme.typography.titleMedium)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Send cards to a scanner server")
+            Text("The phone finds and captures the cards; the server reads them and keeps the collection. Uncertain cards wait in the server's review queue. Off: this phone does everything itself, with its own inventory - which is not touched while this is on.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(settings.serverMode, { viewModel.updateSettings(settings.copy(serverMode = it)) })
+    }
+    if (!settings.serverMode) return
+    OutlinedTextField(
+        value = settings.serverUrl,
+        onValueChange = { viewModel.updateSettings(settings.copy(serverUrl = it.trim())) },
+        label = { Text("Server address") },
+        placeholder = { Text("http://192.168.1.20:5000") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = settings.stationName,
+        onValueChange = { viewModel.updateSettings(settings.copy(stationName = it.take(60))) },
+        label = { Text("This phone's name on the server") },
+        supportingText = { Text("Station id: ${settings.stationId}") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = settings.stationToken,
+        onValueChange = { viewModel.updateSettings(settings.copy(stationToken = it.trim())) },
+        label = { Text("Station token (if the server has one)") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = {
+            status = "Connecting…"
+            scope.launch { status = viewModel.testServer() }
+        }) { Text("Test connection") }
+        status?.let { Text(it, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodySmall) }
     }
 }
 
