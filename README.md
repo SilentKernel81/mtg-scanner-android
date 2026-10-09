@@ -111,9 +111,18 @@ the other way round.
   `isOffline`). An answer that is an error - a wrong key, a used-up quota - sends it to the
   review queue with its photo.
 
-## Build and install
+## Install
 
-Needs Android Studio's JDK and SDK platform 37.2. Android 8.0 or newer on the phone.
+Download `mtg-scanner-<version>.apk` from the
+[latest release](https://github.com/SilentKernel81/mtg-scanner-android/releases/latest) on the
+phone and open it. Android asks once to allow installing apps from the browser or file manager
+you opened it with, and Play Protect may ask whether to scan an app it has not seen before.
+Needs Android 8.0 or newer and a 64-bit ARM phone (every current one). The app is not on
+Google Play. A newer release installs over an older one and keeps its data.
+
+## Build it yourself
+
+Needs Android Studio's JDK and SDK platform 37.2.
 
 ```bash
 export JAVA_HOME=/opt/android-studio/jbr
@@ -122,7 +131,9 @@ export JAVA_HOME=/opt/android-studio/jbr
 ```
 
 Or open this folder in Android Studio and Run. `install -r` keeps the app's data (settings,
-inventory, the outbox).
+inventory, the outbox). A build of your own is signed with your machine's debug key, so it
+cannot be installed over a downloaded release (or the other way round) without uninstalling
+first, which removes the app's data.
 
 ## Tests
 
@@ -156,6 +167,7 @@ inventory, the outbox).
 | Client mode without a network, app killed | emulator, 2026-10-09 | Three captures reached the server once each after the network and the app were back |
 | Standalone without a network, app killed | emulator, 2026-10-09 | The capture was identified on the next start |
 | CSV export → server import | 102 entries of the emulator's inventory, 2026-10-09 | All imported, every card id found in the server's card data |
+| The release build | emulator (an x86_64 copy of it), 2026-10-09 | Starts and shows the camera screen. The downloadable arm64 file itself has not been installed on a phone |
 
 Not done yet:
 

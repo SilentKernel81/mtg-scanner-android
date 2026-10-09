@@ -42,11 +42,23 @@ export JAVA_HOME=/opt/android-studio/jbr     # Android Studio's JDK (Java 25); t
 ./gradlew testDebugUnitTest                  # JVM tests (parity with the Python code, the server's answers)
 ~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
 ~/Android/Sdk/platform-tools/adb logcat -s Scanner:I     # captures, identifications, the server's answers, review queue
+./gradlew assembleRelease                    # the downloadable APK: arm64 only (~41 MB), signed with the release key
 ```
+
+**Releases.** The APK on GitHub's releases page is `assembleRelease`, signed with the user's
+release key: `keystore.properties` (ignored by git) names the keystore and a password file,
+both in `~/.android/` on the user's laptop - never commit them, print the password or move
+them into the repository. Without that file the release build is unsigned. For a new release:
+raise `versionCode` (an APK with a lower one won't install over a newer) and `versionName`,
+build, check it with `apksigner verify --print-certs` (certificate SHA-256 `9599ad2d…97a1f7`),
+and attach it as `mtg-scanner-<versionName>.apk` - when the user asks for a release. The debug
+build has another signature: it cannot replace an installed release or the other way round
+without uninstalling, which wipes the app's data - so don't install a release APK on the
+Pixel over its debug build.
 
 Toolchain: AGP 9.4 (built-in Kotlin, no `kotlin-android` plugin), Kotlin 2.4, Gradle 9.8 wrapper,
 compileSdk 37.2 (`release(37) { minorApiLevel = 2 }` - current AndroidX / OkHttp require 37),
-minSdk 26, ABIs arm64-v8a + x86_64. `local.properties` (sdk.dir) is not in git. Don't add
+minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-PreleaseAbis=` changes it). `local.properties` (sdk.dir) is not in git. Don't add
 `jvmToolchain(17)`: it would try to download a JDK 17.
 
 ## Testing
