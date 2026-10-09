@@ -40,8 +40,10 @@ there (`/scan/<station id>`).
   loses captures not sent yet.
 - Tested 2026-10-09 on the emulator against the server in Docker: a capture answered in 1.1 s
   (queued for review: the emulator's camera shows no card), a capture made with the network
-  off sent once when it was back, *Test connection*. Not tested yet: a real card being added
-  and Undo on a phone.
+  off sent once when it was back, *Test connection*. On the Pixel 10 over the box: a card
+  captured by hand, added on the server by its OCR in 0.6 s, and taken back with Undo; the
+  phone's own inventory file unchanged. Not tested yet: auto-capture card after card in client
+  mode, and a fixed-area capture (which sends a second picture for the foil check).
 
 ## Build and install
 
