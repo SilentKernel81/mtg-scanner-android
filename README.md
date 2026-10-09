@@ -120,6 +120,10 @@ you opened it with, and Play Protect may ask whether to scan an app it has not s
 Needs Android 8.0 or newer and a 64-bit ARM phone (every current one). The app is not on
 Google Play. A newer release installs over an older one and keeps its data.
 
+[INSTALL_GUIDE.md](INSTALL_GUIDE.md) goes through it step by step - installing, mounting the
+phone, and the first scan in each mode - and [VIDEO_SCRIPT.md](VIDEO_SCRIPT.md) is a script
+for filming that.
+
 ## Build it yourself
 
 Needs Android Studio's JDK and SDK platform 37.2.
