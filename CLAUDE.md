@@ -20,6 +20,9 @@ server*):
 Either way a capture is saved on the phone first (the outbox) and waits for the network if
 there is none. Magic only.
 
+The app is developed entirely with AI (this assistant, directed by the user), and README.md
+says so (*How this project was built*): keep that statement true and in place.
+
 The Python side is the scanner server, repository
 [SilentKernel81/scanner-server](https://github.com/SilentKernel81/scanner-server), checked out
 beside this one (`../scanner-server`): the detection, auto-capture, prompts / answer parsing,

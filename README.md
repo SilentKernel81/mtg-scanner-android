@@ -4,6 +4,10 @@ A phone as a card scanner for Magic: The Gathering. Mount the phone over a box a
 onto a pile: the camera finds each card by its outline (or a fixed area), captures it once it
 lies still, and the card is identified down to the exact printing and finish.
 
+> **Built with AI.** All of this app - the code, the tests and this documentation - was
+> written by an AI coding assistant (Claude, through Claude Code), directed by the project's
+> author. See [How this project was built](#how-this-project-was-built).
+
 Native Kotlin (Jetpack Compose, CameraX, OpenCV). It works in two ways, switched in Settings:
 
 | | Standalone | Client of a scanner server |
@@ -162,3 +166,15 @@ Not done yet:
   on a real phone, nor a fixed-area capture in client mode (it sends a second picture).
 - The station token has not been tried from the app.
 - Prompt editor, API keys in the Android Keystore, per-ABI APKs.
+
+## How this project was built
+
+This app was developed entirely with AI. The code, the tests and this documentation were
+written by an AI coding assistant - Claude, by Anthropic, working through Claude Code - as the
+commit history records (every commit carries a `Co-Authored-By: Claude` line). The same goes
+for the [scanner server](https://github.com/SilentKernel81/scanner-server) it works with.
+
+The project's author decided what to build and how it should behave, and ran it on a real
+phone over a box of real cards; *What has been tried* is what came of those runs. It has been run,
+not audited: no one has reviewed the code independently, and the automated tests cover the
+parts that must match the server (the answer parser, the CSV format, the server's answers).
