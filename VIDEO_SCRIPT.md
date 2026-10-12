@@ -7,7 +7,7 @@ Each scene lists the **picture** (what is on screen), the **voice** (to read or 
 is **tapped**. Times are a guide.
 
 It follows on from the server's video
-([its script](https://github.com/SilentKernel81/scanner-server/blob/main/VIDEO_SCRIPT.md)) but
+([its script](https://github.com/SilentKernel81/scanner-server/blob/main/docs/VIDEO_SCRIPT.md)) but
 stands on its own.
 
 ## Before recording

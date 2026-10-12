@@ -29,7 +29,7 @@ beside this one (`../scanner-server`): the detection, auto-capture, prompts / an
 matching and CSV format here are ports of its code, and it is the server of client mode.
 **README.md maps each Kotlin file to the Python code it ports** - when changing any of those,
 or the station upload and its answer, check the Python side and keep both in step (the
-thresholds were measured there; see its PROGRAM_DOCUMENTATION.md).
+thresholds were measured there; see its docs/PROGRAM_DOCUMENTATION.md).
 
 The desktop scanner the port started from ([SilentKernel81/scanner](https://github.com/SilentKernel81/scanner),
 `../scanner`) is a separate project with the same detection code; it is not changed from here.

@@ -24,7 +24,7 @@ steps below were checked.
 | **A way to hold it** | The phone must look straight down at the cards and stay put: a phone arm, a tripod with a phone clamp, or a shelf with a hole. 20-30 cm above the cards |
 | **A box or a mat** | Plain and light, a little larger than a card - the card's dark border must stand out |
 | **Light** | Even room light. The app can switch on the phone's light, which helps in a dim room but glares on foils |
-| **For a server** | A scanner server running on the same Wi-Fi, and its address (`http://<address>:5000`) - its [Docker guide](https://github.com/SilentKernel81/scanner-server/blob/main/DOCKER_GUIDE.md) sets one up |
+| **For a server** | A scanner server running on the same Wi-Fi, and its address (`http://<address>:5000`) - its [Docker guide](https://github.com/SilentKernel81/scanner-server/blob/main/docs/DOCKER_GUIDE.md) sets one up |
 | **For standalone** | An API key for Google Gemini, OpenAI, Anthropic or OpenRouter, or an [Ollama](https://ollama.com) server with a vision model on your network |
 
 ## Part 1 - Install

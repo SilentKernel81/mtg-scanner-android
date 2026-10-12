@@ -15,7 +15,7 @@ data class ServerCard(val name: String, val set: String, val number: String, val
 
 /**
  * What became of a capture on the server (its answer to POST /api/stations/<id>/captures - see
- * the server's PROGRAM_DOCUMENTATION.md, Stations)
+ * the server's docs/PROGRAM_DOCUMENTATION.md, Stations)
  */
 data class ServerOutcome(
     /** The capture's number at this station (to ask again while it is PENDING) */
