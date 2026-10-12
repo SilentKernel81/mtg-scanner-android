@@ -108,6 +108,7 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
 | Review queue (photo + reading + suggestion) | `inventory/ReviewQueue.kt`, `ui/ReviewScreen.kt`, printing search `ui/PrintingSearch.kt` |
 | Screens | `ui/ScannerScreen.kt` (camera, overlay, area drawing with loupe, scan list), `ui/InventoryScreen.kt`, `ui/SettingsScreen.kt`; navigation in `MainActivity.kt` |
 | Settings (live state, coalesced secure writes) | `AppSettings.kt`; `settings/SettingsRepository.kt`, `SettingsStorage.kt`, `CredentialCipher.kt` |
+| Live scan progress and inventory browsing | `ui/InventoryBrowser.kt` overlays the scanner to keep auto capture running; shared single-image rows in `ui/ScanCard.kt` |
 | Visual theme and shared rounded surfaces | `ui/ScannerTheme.kt`, `ui/FeedComponents.kt` |
 | Sound effects (the web UI's beeps) | `Sounds.kt` |
 
@@ -137,6 +138,11 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
   (`ServerOutcomeTest` has real answers). The upload carries the outbox id as `capture_id`, so
   a repeat is one card - keep it. The server keeps one Undo per station: only the newest added
   card can be taken back.
+- **A scan row follows its capture on the server** (`syncCapture`, with the answer's `sync_key`):
+  a row leaves the phone only when the server says `removed` / `resolved` - or, when the server
+  says it cannot follow the capture (`ServerRefused.cannotFollow`: 404 / 409), on the user's
+  second Remove (`serverCannotFollow`). Never dismiss a row on any other failure, and never on
+  the first tap: the card may still be on the server.
 - **The CSV export is the server's collection CSV**, byte for byte (`ExportParityTest`). When
   its columns change there, regenerate `export_reference.json` and change `writeCsv`.
 - **Match confidence** (standalone): only `Scryfall.CONFIRMED` matches (`set_number`,

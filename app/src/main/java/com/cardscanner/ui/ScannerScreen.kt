@@ -1,8 +1,5 @@
 package com.cardscanner.ui
 
-import android.content.Intent
-import android.net.Uri
-
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -20,7 +17,6 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ButtonDefaults
@@ -29,9 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -41,7 +35,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
@@ -59,7 +52,6 @@ import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -79,31 +71,26 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.compose.AsyncImage
-import com.cardscanner.ScanResult
 import com.cardscanner.ScannerViewModel
 import com.cardscanner.detection.CardTracker
 import android.widget.Toast
 
 /**
  * The main screen: the camera with the detected outline (or the fixed area) and a status chip,
- * the capture controls, and the list of captures with what became of each - a card identified
- * here (ScanRow) or the scanner server's answer (ServerScanRow). In client mode the inventory and
- * review buttons give way to a link to the phone's page on the server.
+ * the capture controls and the latest result. Inventory opens scrollable live scan progress
+ * over the scanner; standalone mode also offers the full local collection.
  */
 @Composable
 fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInventory: () -> Unit, onReview: () -> Unit) {
     val detection by viewModel.detection.collectAsStateWithLifecycle()
-    val scans by viewModel.scans.collectAsStateWithLifecycle()
+    val latestScan by viewModel.latestScan.collectAsStateWithLifecycle()
     val auto by viewModel.autoCapture.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -114,18 +101,18 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
 
     val entries by viewModel.inventoryEntries.collectAsStateWithLifecycle()
     val review by viewModel.review.collectAsStateWithLifecycle()
-    val serverUndo by viewModel.serverUndo.collectAsStateWithLifecycle()
     val waiting by viewModel.waiting.collectAsStateWithLifecycle()
     LaunchedEffect(message) {
         message?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); viewModel.clearMessage() }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
-    // The camera frames are 3:4, or 4:3 when turned a quarter; bounded in height so the
-    // controls and results stay visible
+    // Use almost the full screen width, reserving space for the header, controls and results
+    // on shorter displays. Keep the sensor aspect ratio so overlays stay aligned.
     val sideways = settings.rotation % 180 != 0
     val aspect = if (sideways) 4f / 3f else 3f / 4f
-    val cameraWidth = minOf(maxWidth - 24.dp, maxHeight * 0.38f * aspect)
+    val cameraHeight = (maxHeight - 340.dp).coerceAtLeast(100.dp)
+    val cameraWidth = minOf(maxWidth - 16.dp, cameraHeight * aspect)
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("Card Scanner", if (settings.serverMode) "Server mode · captures saved before sending" else "Scan. Collect. Repeat.") {
             IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
@@ -170,43 +157,25 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
             }
             if (areaOn) TextButton(onClick = { drawingArea = true }) { Text("Redraw area") }
             Spacer(Modifier.weight(1f))
-            if (scans.isNotEmpty()) {
-                IconButton(onClick = viewModel::clearScans) { Icon(Icons.Default.DeleteSweep, "Clear the list") }
+            if (latestScan != null) {
+                IconButton(onClick = { latestScan?.let { viewModel.dismissScan(it.id) } }) {
+                    Icon(Icons.Default.DeleteSweep, "Remove latest scan")
+                }
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.width(8.dp))
-            if (settings.serverMode) {
-                // Client mode: the cards and the review queue are the server's - this phone's page there
-                TextButton(onClick = {
-                    val url = viewModel.serverPageUrl
-                    if (url == null) Toast.makeText(context, "Set the server address in Settings", Toast.LENGTH_SHORT).show()
-                    else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                }) { Text("Cards and review on the server", maxLines = 1) }
-            } else {
-                if (review.isNotEmpty()) {
-                    FilledTonalButton(onClick = onReview) {
-                        Text("Review ${review.size}", color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
-                    }
-                }
-                FilledTonalButton(onClick = onInventory, modifier = Modifier.padding(start = 8.dp)) {
-                    Icon(Icons.Default.Inventory2, null, Modifier.size(18.dp))
-                    Text("Inventory · ${entries.sumOf { it.quantity }}", Modifier.padding(start = 4.dp), maxLines = 1)
+            if (!settings.serverMode && review.isNotEmpty()) {
+                FilledTonalButton(onClick = onReview) {
+                    Text("Review ${review.size}", color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
                 }
             }
+            FilledTonalButton(onClick = onInventory, modifier = Modifier.padding(start = 8.dp)) {
+                Icon(Icons.Default.Inventory2, null, Modifier.size(18.dp))
+                Text(if (settings.serverMode) "Inventory · scan progress" else "Inventory · ${entries.sumOf { it.quantity }}",
+                    Modifier.padding(start = 4.dp), maxLines = 1)
+            }
         }
-        detection?.metrics?.let {
-            Text(
-                if (detection?.area != null) "change %.1f · drift %.1f · sharpness %.0f (min %d)".format(
-                    it.movement, it.drift, it.sharpness, settings.minSharpness)
-                else "movement %.1f%% · drift %.1f%% · sharpness %.0f (min %d)".format(
-                    it.movement * 100, it.drift * 100, it.sharpness, settings.minSharpness),
-                Modifier.padding(horizontal = 12.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
         if (waiting > 1) {
             // More than the card in hand: no network, or a queue (captures are kept until they are settled)
             Text("$waiting captures waiting " + (if (settings.serverMode) "for the server" else "to be identified") +
@@ -220,17 +189,11 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
         // Newest card first: show it when it arrives (a LazyColumn otherwise keeps the item that
         // was on top in view, and new cards pile up hidden above it)
         val listState = rememberLazyListState()
-        LaunchedEffect(scans.firstOrNull()?.id) { if (scans.isNotEmpty()) listState.animateScrollToItem(0) }
+        LaunchedEffect(latestScan?.id) { if (latestScan != null) listState.animateScrollToItem(0) }
         LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState,
             contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (scans.isEmpty()) item {
-                EmptyFeed("Ready for your next find?", "Place a card in view and tap Capture card, or turn on Auto scan.")
-            }
-            items(scans, key = { it.id }) {
-                FeedCard {
-                    if (it.server != null) ServerScanRow(it, canUndo = it.id == serverUndo, onUndo = viewModel::undoOnServer)
-                    else ScanRow(it, onAdd = { viewModel.addScan(it.id) }, onUndo = { viewModel.undoScan(it.id) })
-                }
+            items(listOfNotNull(latestScan), key = { it.id }) {
+                ScanCard(viewModel, it, compact = true)
             }
         }
     }
@@ -341,118 +304,6 @@ private fun StatusChip(state: CardTracker.State?, auto: Boolean, modifier: Modif
         color = if (state == null || state.status == CardTracker.Status.NO_CARD) Color.White else statusColor(state.status),
         style = MaterialTheme.typography.labelLarge,
     )
-}
-
-@Composable
-private fun ScanRow(scan: ScanResult, onAdd: () -> Unit, onUndo: () -> Unit) {
-    val context = LocalContext.current
-    val printing = scan.printing
-    Row(
-        Modifier.fillMaxWidth()
-            .clickable(enabled = printing != null) {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(printing!!.scryfallUrl)))
-            }
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(10.dp)))
-        if (printing?.imageUrl != null) {
-            AsyncImage(printing.imageUrl, "Scryfall image", Modifier.height(96.dp).width(69.dp).clip(RoundedCornerShape(10.dp)))
-        }
-        Column(Modifier.weight(1f)) {
-            when (scan.status) {
-                ScanResult.Status.IDENTIFYING -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(scan.note ?: "Identifying…", Modifier.padding(start = 8.dp))
-                }
-                ScanResult.Status.FAILED -> {
-                    Text(scan.error ?: "Failed", color = MaterialTheme.colorScheme.error)
-                    if (scan.reviewId != null) Text("In the review queue", color = MaterialTheme.colorScheme.tertiary,
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                ScanResult.Status.DONE -> {
-                    Text(printing?.name ?: scan.reading?.name.orEmpty(), fontWeight = FontWeight.SemiBold)
-                    if (printing != null) {
-                        Text("${printing.setName} (${printing.setCode}) #${printing.collectorNumber} · ${printing.rarity}",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    val finish = when (scan.foil) { true -> "Foil"; false -> "Non-foil"; null -> "Finish unknown" }
-                    Text(finish + (scan.foilReason?.let { " ($it)" } ?: ""), style = MaterialTheme.typography.bodySmall)
-                    val price = if (scan.foil == true) printing?.usdFoil ?: printing?.eurFoil?.let { "€$it" }
-                                else printing?.usd ?: printing?.eur?.let { "€$it" }
-                    price?.let { Text(if (it.startsWith("€")) it else "$$it", style = MaterialTheme.typography.bodySmall) }
-                    if (printing != null && !printing.confirmed) {
-                        Text("Check: matched by ${printing.match.replace('_', ' ')}",
-                            color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
-                    }
-                    scan.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    if (printing != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (scan.reviewId != null && !scan.pendingAdd) {
-                                Text("In the review queue", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
-                            } else if (scan.inventoryId != null) {
-                                Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = Color(0xFF00C853))
-                                Text("In inventory (${scan.finish.label.lowercase()})", Modifier.padding(start = 4.dp),
-                                    style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = onUndo) { Text("Undo") }
-                            } else {
-                                FilledTonalButton(onClick = onAdd, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                                    Text("Add as ${scan.finish.label.lowercase()}")
-                                }
-                            }
-                        }
-                    }
-                    val read = scan.reading
-                    Text(
-                        "AI read: ${read?.name} #${read?.collectorNumber?.ifEmpty { "?" }} [${read?.setCode?.ifEmpty { "?" }}]" +
-                            (scan.seconds?.let { " · %.1f s".format(it) } ?: "") +
-                            (scan.usage?.let { u ->
-                                " · ${u.input} in / ${u.output} out tokens" +
-                                    (if (u.thinking > 0) " (${u.thinking} thinking)" else "") +
-                                    (u.cost?.let { " · $%.5f".format(it) } ?: "")
-                            } ?: ""),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Client mode: a card as the server answered - added to its scanned cards, or in its review queue */
-@Composable
-private fun ServerScanRow(scan: ScanResult, canUndo: Boolean, onUndo: () -> Unit) {
-    val outcome = scan.server ?: return
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(10.dp)))
-        Column(Modifier.weight(1f)) {
-            val card = outcome.card
-            Text(card?.name ?: outcome.readName.ifEmpty { "Not read" }, fontWeight = FontWeight.SemiBold)
-            if (card != null) {
-                Text("${card.set} #${card.number} · ${card.finish}", style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (scan.undone) {
-                        Text("Taken back", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = Color(0xFF00C853))
-                        Text("Added on the server", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.bodySmall)
-                        if (canUndo) TextButton(onClick = onUndo) { Text("Undo") }
-                    }
-                }
-            } else {
-                Text("In the server's review queue: ${outcome.reason ?: "not confirmed"}",
-                    color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
-            }
-            Text(
-                (outcome.reader?.let { "Read by $it: " } ?: "Read: ") +
-                    "${outcome.readName.ifEmpty { "?" }} #${outcome.readNumber.ifEmpty { "?" }} [${outcome.readSet.ifEmpty { "?" }}]" +
-                    (scan.seconds?.let { " · %.1f s".format(it) } ?: ""),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /**

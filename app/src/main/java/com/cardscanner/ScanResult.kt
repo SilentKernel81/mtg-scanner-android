@@ -29,6 +29,16 @@ data class ScanResult(
     val pendingAdd: Boolean = false,
     /** Client mode: what the server made of the card (null in standalone mode, and until it answers) */
     val server: ServerOutcome? = null,
+    val serverUrl: String? = null,
+    val stationId: String? = null,
+    val deleting: Boolean = false,
+    /**
+     * Client mode: the server said it cannot follow this capture (ServerRefused.cannotFollow)
+     * when asked to remove it. Remove then takes the row off the phone only - whatever the
+     * capture became stays on the server, to be removed there.
+     */
+    val serverCannotFollow: Boolean = false,
+    val serverMode: Boolean = false,
     /** Client mode: the server's add was taken back (Undo) */
     val undone: Boolean = false,
     /** What is going on while IDENTIFYING, when it isn't the AI ("Sending…", "Server not reachable…") */

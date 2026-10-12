@@ -32,7 +32,14 @@ this app - and keeps one collection. The phone is one of its *stations*.
   inside it. The phone must not move afterwards.
 - **Rotate** turns the image when the phone is mounted sideways; the light button switches the
   torch.
-- **The list under the camera** shows each capture and what became of it.
+- **Under the camera**, one row shows the latest capture and its status. Tap **Inventory**
+  for scrollable **Scan progress**, or **Collection** for all locally saved cards. Auto scan
+  keeps running while you browse. In client mode Remove also removes that captured copy from
+  the server's scanned cards/review queue. Collection transfers remove the corresponding phone
+  rows automatically. The brush on the camera screen removes just the latest scan and leaves
+  its row blank until another capture; the brush in **Scan progress** removes
+  the displayed history. Neither removes saved
+  inventory cards or pending captures.
 
 **Standalone.** A card whose exact printing is confirmed (set + number, or name + number) goes
 into the phone's inventory right away, with an Undo in the list; anything uncertain goes to
@@ -47,7 +54,7 @@ thresholds.
 
 **Client mode.** Settings → *Send cards to a scanner server*, the server's address
 (`http://<server>:5000`), and **Test connection**. Each capture is uploaded; the list shows
-the server's answer - *Added on the server* (with Undo for the newest card) or *In the server's
+the server's answer - *Added on the server* (with capture-specific Remove) or *In the server's
 review queue*. *Cards and review on the server* opens the phone's page there. The phone's own
 inventory, review queue, AI settings and card data are not used and not touched while client
 mode is on.
@@ -71,7 +78,7 @@ repository as `../scanner-server`):
 
 | Android | Python | Used in |
 |---|---|---|
-| `detection/CardOutline.kt` | `object_detector.py` (`find_card_outline`, `warp_card`) | both modes |
+| `detection/CardOutline.kt` | `object_detector.py` (`find_card_outline`, `warp_card`, `_is_whole_picture`; not ported: the gap closing and the card inside a box, `GAP_CLOSING`, `_card_inside_box`) | both modes |
 | `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds) - no focus sweep: the phone's continuous autofocus | both modes |
 | `Outbox.kt`, `CaptureProcessor.kt` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
 | `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
@@ -106,6 +113,12 @@ Existing sound preferences migrate without unmuting previously disabled cues. `u
 the shared headers, card containers and empty states. Camera preview dimensions retain the
 sensor aspect ratio so detection overlays and fixed-area gestures stay aligned.
 
+The camera screen shows the latest scan as a single-image row without movement, drift or
+sharpness diagnostics. Inventory opens live **Scan progress** (the latest 100 captures) and,
+in standalone mode, the full **Collection**. The inventory window keeps the camera bound so
+auto-scan continues while browsing; the scroll position stays under the user's control as new
+results arrive. Client mode links to the server's collection instead of exposing local data.
+
 ### A capture's way
 
 `ScannerViewModel.capture` takes a full-resolution still, finds the card in it again and cuts
@@ -139,9 +152,23 @@ the other way round.
 - **Client mode**: `ScannerServer.sendCapture` posts the photo to
   `/api/stations/<station id>/captures` with a `capture_id` (the outbox id), so a capture
   sent again after no answer is still one card on the server. The answer (`ServerOutcome`) is
-  *added*, *review*, or *pending* - then `outcome()` asks again every 2 s. Undo calls
-  `/api/stations/<id>/undo`; the server keeps one Undo per station, so only the newest card
-  has the button. Invalid addresses, rejected uploads and server errors keep the capture on disk
+  *added*, *review*, or *pending* - then `outcome()` asks again every 2 s.
+  Remove calls `DELETE /api/stations/<id>/captures/<number>/sync`: precisely that captured
+  copy leaves the server's scanned cards/review queue before its phone row disappears.
+  Remove all snapshots the phone's visible history, so new captures are kept. A failed removal
+  leaves the row available to retry; removal requested before identification finishes is saved
+  in the outbox and survives restarting. Server/station changes cannot redirect a queued upload
+  or deletion to another server. Every 10 seconds the app checks settled captures with the
+  synchronization endpoint, sending `sync_key` so a reused station capture number cannot target
+  another card; moving them into the server's collection (with their chosen location),
+  or otherwise resolving them, removes their phone rows. Collection entries are never deleted
+  by a phone scan removal. This requires the matching server update. A capture the server
+  cannot follow - it answers 409 (scanned before the server had synchronization, added without
+  a photo, or its number belongs to another capture now) or 404 (not on record there) - can
+  never be kept in step: Remove changes nothing on the server and says so, the row's button
+  becomes *Remove from phone*, and a second tap takes the row off the phone only
+  (`ServerRefused.cannotFollow`, `ScanResult.serverCannotFollow`). Any other failed removal (no
+  connection, a wrong token) keeps the row to try again. Invalid addresses, rejected uploads and server errors keep the capture on disk
   for retry after correcting the configuration; a pending result is also kept until settled.
   The station id is made once (`phone-xxxxxxxx`) and kept; the name defaults
   to the phone's model.
@@ -233,8 +260,7 @@ first, which removes the app's data.
 Not done yet:
 
 - The thresholds (sharpness 250, movement 1%, ...) were measured with the Python scanner's USB
-  webcam; re-measure on phones (live values are shown under the camera; minimum sharpness and
-  still frames are in Settings).
+  webcam; re-measure on phones (minimum sharpness and still frames are in Settings).
 - Standalone auto mode with outline detection has not been measured; nor a long offline pile
   on a real phone, nor a fixed-area capture in client mode (it sends a second picture).
 - The station token has not been tried from the app.
@@ -257,3 +283,23 @@ cover compatibility with the server and the persistence/concurrency paths listed
 
 [MIT](LICENSE) - free to use, modify and share, including commercially, as long as the
 copyright notice stays with it. No warranty.
+
+### Capture synchronization validation (2026-10-12)
+
+Validated against scanner-server commit `25be00d`: all 182 server tests, 16 Android JVM tests,
+17 Android reliability tests, and an opt-in emulator-to-server HTTP contract test passed.
+The HTTP test used temporary server databases and synthetic cards: removing one duplicate,
+repeating deletion, rejecting a mismatched capture identity, keeping another station's card,
+and moving a scan into a collection/location before attempting deletion again. No production
+inventory was changed. `ServerSyncIntegrationTest` runs only when the instrumentation argument
+`serverValidationUrl` points to the disposable fixture server; ordinary test runs skip it.
+
+Added afterwards (same day): the phone-only removal of a capture the server cannot follow, and
+the detector's rule that the picture's own border is not a card. 19 reliability tests pass on
+the emulator (two new: a 409 leaves the row until the second Remove; a 401 keeps it), and the
+JVM tests. The detector rule was measured on the server's side only (its
+docs/PROGRAM_DOCUMENTATION.md, Card detection, step 8) - `OutlineParityTest` was not run for
+it. On the Pixel 10 against the real server (same day): one card captured three times, the
+middle row removed - the server lost exactly that capture's copy; the other two cleared on the
+server - their rows left the phone by themselves. Not tried there: a review item, the move
+into the collection, and a capture the server cannot follow.

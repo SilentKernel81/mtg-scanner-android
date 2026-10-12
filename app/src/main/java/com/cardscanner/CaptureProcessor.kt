@@ -42,13 +42,100 @@ internal class CaptureProcessor(
     private val outbox = Outbox(context)
     private val aiSlots = Semaphore(1)
     private val serverSlots = Semaphore(3)
+    private val pendingItems = java.util.concurrent.ConcurrentHashMap<Long, Outbox.Item>()
     private val activeCaptures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val _serverUndo = MutableStateFlow<Long?>(null)
     val serverUndo = _serverUndo.asStateFlow()
     private val serverUndoMutex = Mutex()
+    private val removalSlots = Semaphore(3)
     private val _waiting = MutableStateFlow(0)
     val waiting = _waiting.asStateFlow()
     private fun refreshWaiting() = synchronized(outbox) { _waiting.value = outbox.count() }
+
+    init {
+        scope.launch(Dispatchers.IO) {
+            while (true) {
+                kotlinx.coroutines.delay(10_000)
+                for (scan in history.scans.value) {
+                    // (a row the server cannot follow is not asked about again: the answer stays the same)
+                    if (scan.deleting || scan.serverCannotFollow || scan.server?.syncKey == null || scan.server.capture == null) continue
+                    try {
+                        val state = serverFor(scan).syncCapture(scan.server.capture, syncKey = scan.server.syncKey)
+                        if (state == "resolved" || state == "removed") history.dismiss(scan.id)
+                        else if (state == "scanned" && scan.server.status == ServerOutcome.Status.REVIEW) {
+                            history.update { list -> list.map {
+                                if (it.id == scan.id) it.copy(server = it.server?.copy(status = ServerOutcome.Status.ADDED)) else it
+                            } }
+                        }
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { /* Keep the row until the server confirms it left staging. */ }
+                }
+            }
+        }
+    }
+
+    private fun serverFor(scan: ScanResult): ScannerServer {
+        val current = settings()
+        if (scan.serverUrl != ScannerServer.normalize(current.serverUrl) || scan.stationId != current.stationId)
+            throw ServerRefused("Restore this scan's server and station in Settings to remove it")
+        return ScannerServer(current.serverUrl, current.stationId, current.stationName.ifBlank { current.stationId },
+            current.stationToken, http)
+    }
+
+    /** Remove the same capture from the server before dismissing its phone row. */
+    fun dismissScan(id: Long) {
+        val scan = history.scans.value.firstOrNull { it.id == id } ?: return
+        if (!scan.serverMode && scan.server == null) { history.dismiss(id); return }
+        if (scan.deleting) return
+        // The server already said it cannot follow this capture, and the user was told: this
+        // second Remove is the choice to take it off the phone's list only
+        if (scan.serverCannotFollow) { history.dismiss(id); _serverUndo.compareAndSet(id, null); return }
+        val capture = scan.server?.capture
+        if (capture == null) {
+            val item = pendingItems[id]
+            if (item == null) { onMessage("The capture is being saved; try removing it again shortly"); return }
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val queued = synchronized(outbox) {
+                        if (!item.metaFile.isFile) false else {
+                            item.requestDeletion()
+                            history.update { list -> list.map { if (it.id == id) it.copy(deleting = true) else it } }
+                            true
+                        }
+                    }
+                    if (!queued) dismissScan(id)
+                } catch (e: Exception) { onMessage("Could not queue removal: ${e.message}") }
+            }
+            return
+        }
+        history.update { list -> list.map { if (it.id == id) it.copy(deleting = true) else it } }
+        scope.launch(Dispatchers.IO) {
+            try {
+                when (removalSlots.withPermit { serverFor(scan).syncCapture(capture, remove = true, syncKey = scan.server?.syncKey) }) {
+                    "removed", "resolved" -> { history.dismiss(id); _serverUndo.compareAndSet(id, null) }
+                    else -> onMessage("The server is still processing this capture; try removing it again shortly")
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: ServerRefused) {
+                if (e.cannotFollow) {
+                    // Not a failure that another try can mend: nothing on the server is removed,
+                    // and the row would stay for ever. It is marked, and the next Remove takes
+                    // it off the phone - a second tap, so that a card left on the server is
+                    // never the result of a single one.
+                    history.update { list -> list.map { if (it.id == id) it.copy(serverCannotFollow = true) else it } }
+                    onMessage("The server cannot follow this capture: ${e.message}. " +
+                        "Remove again takes it off the phone only - check the server for its card.")
+                } else onMessage("Could not remove scan: ${e.message}. It is still on the phone.")
+            }
+            catch (e: Exception) { onMessage("Could not remove scan: ${e.message}. It is still on the phone.") }
+            finally { history.update { list -> list.map { if (it.id == id) it.copy(deleting = false) else it } } }
+        }
+    }
+
+    fun clearScans() {
+        // Snapshot the list: captures arriving after the tap are never removed.
+        history.scans.value.forEach { dismissScan(it.id) }
+    }
 
     fun resume() {
         // Captures that were still waiting when the app was closed
@@ -103,6 +190,8 @@ internal class CaptureProcessor(
     /** Retry disk-backed captures. Permits bound decoded photos, including during server polls. */
     private fun process(id: Long, item: Outbox.Item) {
         if (!activeCaptures.add(item.captureId)) return
+        pendingItems[id] = item
+        if (item.deleteRequested) history.update { list -> list.map { if (it.id == id) it.copy(deleting = true) else it } }
         scope.launch(Dispatchers.IO) {
             val start = System.nanoTime()
             var wait = 2_000L
@@ -116,6 +205,9 @@ internal class CaptureProcessor(
                         // send that same capture to a server after settings have changed.
                         if (settings().serverMode != serverMode) {
                             false // Settings changed while this capture was waiting for a slot.
+                        } else if (item.deleteRequested && !serverMode) {
+                            note(id, "Switch back to server mode to finish removing this capture")
+                            false
                         } else if (collection.hasSettled(item.captureId)) {
                             history.update { list -> list.filterNot { it.id == id } }
                             true
@@ -124,15 +216,19 @@ internal class CaptureProcessor(
                         }
                     }
                     if (settled) {
-                        outbox.remove(item)
-                        refreshWaiting()
-                        break
+                        val finished = synchronized(outbox) {
+                            // A deletion may arrive after the server answered but before this cleanup.
+                            if (item.deleteRequested && history.scans.value.any { it.id == id && it.server != null }) false
+                            else { outbox.remove(item); refreshWaiting(); true }
+                        }
+                        if (finished) break
                     }
                     kotlinx.coroutines.delay(wait)
                     wait = minOf(wait * 2, 30_000L)
                 }
             } finally {
                 activeCaptures.remove(item.captureId)
+                pendingItems.remove(id)
             }
         }
     }
@@ -147,7 +243,7 @@ internal class CaptureProcessor(
         var foilPhoto: Bitmap? = null
         try {
             foilPhoto = item.foil(photo)
-            return if (serverMode) sendOnce(id, photo, foilPhoto, item.captureId, start)
+            return if (serverMode) sendOnce(id, photo, foilPhoto, item, start)
                 else identifyOnce(id, photo, foilPhoto, item.captureId, start)
         } catch (e: CancellationException) {
             throw e
@@ -235,10 +331,12 @@ internal class CaptureProcessor(
      * server can't be reached (try again - under the same capture id it is one card however often
      * it is sent). Pending/error/refused captures are kept for retry as well.
      */
-    private suspend fun sendOnce(id: Long, card: Bitmap, foilCard: Bitmap?, captureId: String, start: Long): Boolean {
+    private suspend fun sendOnce(id: Long, card: Bitmap, foilCard: Bitmap?, item: Outbox.Item, start: Long): Boolean {
         try {
             val server = server()
-            var outcome = server.sendCapture(card, foilCard, captureId)
+            ScannerServer.validatedUrl(server.baseUrl)
+            item.bindServer(server.baseUrl, server.stationId)
+            var outcome = server.sendCapture(card, foilCard, item.captureId)
             // Still being read after the wait (a long AI queue): ask until it is settled
             var asked = 0
             while (outcome.status == ServerOutcome.Status.PENDING && outcome.capture != null && asked++ < 90) {
@@ -250,7 +348,27 @@ internal class CaptureProcessor(
                 note(id, outcome.message ?: "The server is still reading it - capture saved for retry")
                 return false
             }
-            serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9)
+            if (item.deleteRequested) {
+                val capture = outcome.capture ?: throw ServerRefused("Server did not return a capture number")
+                try {
+                    when (server.syncCapture(capture, remove = true, syncKey = outcome.syncKey)) {
+                        "removed", "resolved" -> history.dismiss(id)
+                        else -> return false
+                    }
+                } catch (e: ServerRefused) {
+                    if (!e.cannotFollow) throw e
+                    // Removed on the phone before it was sent, and the server cannot take back
+                    // what it made of it: the capture is settled there, so it leaves the outbox
+                    // (sending it again would change nothing) and its row shows what happened,
+                    // for the user to decide (dismissScan)
+                    serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9, server)
+                    history.update { list -> list.map {
+                        if (it.id == id) it.copy(serverCannotFollow = true, deleting = false) else it
+                    } }
+                    onMessage("The server could not remove this capture: ${e.message}. " +
+                        "Remove again takes it off the phone only - check the server for its card.")
+                }
+            } else serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9, server)
         } catch (e: ServerRefused) {
             Log.e(TAG, "The server refused capture #$id: ${e.message}")
             note(id, "Server: ${e.message} - capture saved; update Settings to retry")
@@ -265,14 +383,14 @@ internal class CaptureProcessor(
 
     private fun note(id: Long, text: String) = history.note(id, text)
 
-    private fun serverAnswered(id: Long, outcome: ServerOutcome, seconds: Double) {
+    private fun serverAnswered(id: Long, outcome: ServerOutcome, seconds: Double, server: ScannerServer) {
         Log.i(TAG, "Server #$id: ${outcome.status} ${outcome.card?.name ?: outcome.reason ?: outcome.message.orEmpty()}" +
             " (read by ${outcome.reader}) in %.1f s".format(seconds))
         val reading = CardReading(outcome.readName, outcome.readNumber, outcome.readSet)
         when (outcome.status) {
             ServerOutcome.Status.ADDED, ServerOutcome.Status.REVIEW -> {
                 history.update { list -> list.map {
-                    if (it.id == id) it.copy(status = ScanResult.Status.DONE, server = outcome, reading = reading, seconds = seconds, note = null) else it
+                    if (it.id == id) it.copy(status = ScanResult.Status.DONE, server = outcome, serverUrl = server.baseUrl, stationId = server.stationId, reading = reading, seconds = seconds, note = null) else it
                 } }
                 if (outcome.status == ServerOutcome.Status.ADDED) _serverUndo.value = id
                 val soundSettings = settings()

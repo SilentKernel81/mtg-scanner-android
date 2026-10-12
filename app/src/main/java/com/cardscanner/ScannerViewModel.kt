@@ -26,6 +26,8 @@ import com.cardscanner.scryfall.Printing
 import com.cardscanner.scryfall.Scryfall
 import com.cardscanner.settings.SettingsRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.OkHttpClient
@@ -45,6 +47,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     val settingsError = settingsRepository.error
     private val history = ScanHistory()
     val scans = history.scans
+    val latestScan = history.latestScan.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
     private val _autoCapture = MutableStateFlow(false)
@@ -130,7 +133,8 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
 
     fun clearMessage() { _message.value = null }
 
-    fun clearScans() = history.clear()
+    fun dismissScan(scanId: Long) = processor.dismissScan(scanId)
+    fun clearScans() = processor.clearScans()
 
     fun checkCardDataUpdate() = cardDataRepository.checkCardDataUpdate()
     fun downloadCardData() = cardDataRepository.downloadCardData()

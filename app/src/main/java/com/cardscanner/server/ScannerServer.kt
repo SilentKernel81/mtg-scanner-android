@@ -21,6 +21,7 @@ data class ServerCard(val name: String, val set: String, val number: String, val
 data class ServerOutcome(
     /** The capture's number at this station (to ask again while it is PENDING) */
     val capture: Int? = null,
+    val syncKey: String? = null,
     val status: Status,
     /** ADDED: the card */
     val card: ServerCard? = null,
@@ -52,6 +53,7 @@ data class ServerOutcome(
             fun text(o: JSONObject?, key: String) = if (o == null || o.isNull(key)) null else o.optString(key)
             return ServerOutcome(
                 capture = if (json.has("capture")) json.optInt("capture") else null,
+                syncKey = text(json, "sync_key"),
                 status = status,
                 card = card,
                 reason = text(json, "reason"),
@@ -65,15 +67,27 @@ data class ServerOutcome(
     }
 }
 
-/** The server refused the request (a wrong token, a bad picture): trying again won't help */
-class ServerRefused(message: String) : Exception(message)
+/**
+ * The server refused the request (a wrong token, a bad picture): trying again won't help.
+ * code: the HTTP status it answered with (0 when the refusal was decided on the phone).
+ */
+class ServerRefused(message: String, val code: Int = 0) : Exception(message) {
+    /**
+     * Capture synchronization: the server cannot say where this capture's card is - it does
+     * not know the capture (404: forgotten, or a server from before the synchronization) or
+     * cannot follow it (409: scanned before the server had it, added without a photo, or the
+     * number belongs to another capture now). It never will, so the row cannot be kept in
+     * step: the phone may only take it off its own list.
+     */
+    val cannotFollow get() = code == 404 || code == 409
+}
 
 /**
  * The scanner server, as this phone's station sees it. Calls block (run them off the main
  * thread); IOException means the server could not be reached - the same capture can be sent
  * again with the same captureId and is one card.
  */
-class ScannerServer(serverUrl: String, private val stationId: String, private val stationName: String,
+class ScannerServer(serverUrl: String, val stationId: String, private val stationName: String,
                     private val token: String, private val http: OkHttpClient) {
     val baseUrl = normalize(serverUrl)
 
@@ -93,7 +107,8 @@ class ScannerServer(serverUrl: String, private val stationId: String, private va
             val text = response.body.string()
             val json = runCatching { JSONObject(text) }.getOrNull()
             if (response.code in 400..499) {
-                throw ServerRefused(json?.optString("message")?.takeIf { it.isNotBlank() } ?: "HTTP ${response.code}")
+                throw ServerRefused(json?.optString("message")?.takeIf { it.isNotBlank() } ?: "HTTP ${response.code}",
+                    response.code)
             }
             if (!response.isSuccessful || json == null) throw IOException("HTTP ${response.code}: ${text.take(200)}")
             return response.code to json
@@ -120,6 +135,16 @@ class ScannerServer(serverUrl: String, private val stationId: String, private va
     /** What became of a capture that was still PENDING */
     fun outcome(capture: Int): ServerOutcome =
         ServerOutcome.parse(send(request("/api/stations/$stationId/captures/$capture").get().build()).second)
+
+    /** Live staging state; DELETE affects exactly one capture, never a collected card. */
+    fun syncCapture(capture: Int, remove: Boolean = false, syncKey: String? = null): String {
+        val builder = request("/api/stations/$stationId/captures/$capture/sync")
+        if (syncKey != null) builder.url(builder.build().url.newBuilder().addQueryParameter("sync_key", syncKey).build())
+        val json = send((if (remove) builder.delete() else builder.get()).build()).second
+        if (!json.optBoolean("success")) throw ServerRefused(json.optString("message", "Synchronization failed"))
+        return json.optString("state").takeIf { it in setOf("pending", "scanned", "review", "removed", "resolved") }
+            ?: throw IOException("Invalid capture synchronization response")
+    }
 
     /** Take back the last card this station added: its name, or null when there is nothing to undo */
     fun undo(): String? {

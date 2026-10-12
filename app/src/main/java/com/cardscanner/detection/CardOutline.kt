@@ -103,6 +103,17 @@ private fun isRectangular(c: Corners, sideTolerance: Double = 0.08, angleToleran
     return true
 }
 
+/**
+ * Is this outline the picture's own border (every side within `margin` px of the picture's)?
+ * That is never a card: one that large would be cut off on all four sides. A dark picture with
+ * a card's proportions gives exactly this - with almost no light the edge thresholds are near
+ * zero, the sensor's noise becomes one sheet of edges, and the sheet's outline is the picture.
+ * (Port of object_detector.py: _is_whole_picture, where it was seen and measured.)
+ */
+private fun isWholePicture(c: Corners, width: Int, height: Int, margin: Int = 3): Boolean =
+    c.minOf { it.x } <= margin && c.minOf { it.y } <= margin &&
+        c.maxOf { it.x } >= width - 1 - margin && c.maxOf { it.y } >= height - 1 - margin
+
 private fun bytesOf(mat: Mat): ByteArray = ByteArray((mat.total() * mat.channels()).toInt()).also { mat.get(0, 0, it) }
 
 /** Fraction of points along a rectangle's sides that lie on (or within `reach` of) an edge */
@@ -322,6 +333,8 @@ fun findCardOutline(frame: Mat, allowLandscape: Boolean = false, ratioTolerance:
             val sideH = (corners[3] - corners[0]).norm()
             if (min(sideW, sideH) == 0.0) continue
             if (sideW > sideH && !allowLandscape) continue
+            // The picture's border, not a card - a smaller outline may still be one
+            if (isWholePicture(corners, small.cols(), small.rows())) continue
             val ratio = max(sideW, sideH) / min(sideW, sideH)
             val fill = area / (sideW * sideH)  // 1.0 = perfectly rectangular
             if (abs(ratio - CARD_ASPECT_RATIO) / CARD_ASPECT_RATIO > ratioTolerance || fill < 0.85) continue
@@ -338,6 +351,8 @@ fun findCardOutline(frame: Mat, allowLandscape: Boolean = false, ratioTolerance:
             if (best != null && !isRectangular(best.corners)) best = null
         }
         if (best == null && tracked != null && isRectangular(tracked.corners)) best = tracked
+        // The other ways to an outline (edge pieces, the followed card) are held to the same rule
+        if (best != null && isWholePicture(best.corners, small.cols(), small.rows())) best = null
         return best?.let { Outline(it.corners.scaled(1 / scale), it.fill) }
     } finally {
         listOf(small, gray, rawEdges, edges).forEach { it.release() }

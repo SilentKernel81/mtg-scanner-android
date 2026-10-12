@@ -18,6 +18,7 @@ import com.cardscanner.inventory.Inventory
 import com.cardscanner.inventory.ReviewQueue
 import com.cardscanner.scryfall.CardDatabase
 import com.cardscanner.scryfall.Scryfall
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
@@ -78,6 +79,36 @@ class ReliabilityTest {
         runBlocking { withTimeout(20_000) { jobs.joinAll() } }
         instrumentation.targetContext.deleteSharedPreferences("${root.name}.settings")
         root.deleteRecursively()
+    }
+
+    @Test fun dismissTargetsDisplayedScanAndKeepsNewArrivals() {
+        val history = ScanHistory()
+        val source = photo()
+        try {
+            val older = history.show(source, serverMode = false)
+            val displayed = history.show(source, serverMode = false)
+            // A capture arrives between rendering the button and executing its click.
+            val incoming = history.show(source, serverMode = false)
+            history.dismiss(displayed)
+            assertEquals(listOf(incoming, older), history.scans.value.map { it.id })
+            history.dismiss(displayed) // Repeated taps cannot dismiss a different capture.
+            assertEquals(listOf(incoming, older), history.scans.value.map { it.id })
+            history.dismiss(incoming)
+            assertEquals(listOf(older), history.scans.value.map { it.id })
+            assertNull(runBlocking { history.latestScan.first() })
+            // Late results for older cards must not repopulate the cleared main-screen row.
+            history.note(older, "Still identifying")
+            assertNull(runBlocking { history.latestScan.first() })
+            val next = history.show(source, serverMode = false)
+            assertEquals(next, runBlocking { history.latestScan.first() }?.id)
+            history.clear()
+            assertNull(runBlocking { history.latestScan.first() })
+            assertTrue(history.scans.value.isEmpty())
+            history.dismiss(older)
+            assertTrue(history.scans.value.isEmpty())
+        } finally {
+            source.recycle()
+        }
     }
 
     private fun photo() = Bitmap.createBitmap(64, 88, Bitmap.Config.ARGB_8888)
@@ -262,6 +293,136 @@ class ReliabilityTest {
         assertEquals(12, uploads.get())
         assertTrue(vm.inventoryEntries.value.isEmpty())
         assertTrue(vm.review.value.isEmpty())
+    }
+
+    @Test
+    fun serverRemovalTargetsCaptureAndKeepsRowOnFailure() {
+        AppSettings(serverMode = true, serverUrl = "http://unused.test", captureSound = false, addedSound = false, reviewSound = false).save(context)
+        val uploads = AtomicInteger()
+        val removed = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val allow = java.util.concurrent.atomic.AtomicBoolean(false)
+        val (vm, _) = model(client { request ->
+            when (request.method) {
+                "POST" -> {
+                    val number = uploads.incrementAndGet()
+                    200 to JSONObject().put("status", "added").put("capture", number).put("sync_key", "key-$number")
+                }
+                "DELETE" -> {
+                    val number = request.url.pathSegments[4].toInt()
+                    assertEquals("key-$number", request.url.queryParameter("sync_key"))
+                    if (!allow.get()) 503 to JSONObject().put("message", "Test unavailable")
+                    else { removed.add(number); 200 to JSONObject().put("success", true).put("state", "removed") }
+                }
+                else -> 200 to JSONObject().put("success", true).put("state", "scanned")
+            }
+        })
+        repeat(2) { vm.identify(photo(), null) }
+        await { vm.waiting.value == 0 && vm.scans.value.size == 2 }
+        val displayed = vm.scans.value.first()
+        vm.dismissScan(displayed.id)
+        await { !vm.scans.value.first().deleting && vm.message.value?.contains("Could not remove scan") == true }
+        assertEquals(2, vm.scans.value.size)
+        assertTrue(removed.isEmpty())
+        allow.set(true)
+        vm.dismissScan(displayed.id)
+        await { vm.scans.value.size == 1 }
+        assertEquals(listOf(displayed.server!!.capture), removed.toList())
+        await { vm.latestScan.value == null }
+    }
+
+    @Test
+    fun captureTheServerCannotFollowLeavesThePhoneOnTheSecondRemove() {
+        // 409: the server knows the capture but cannot follow it (scanned before it could, ...).
+        // The first Remove changes nothing and says so; the second takes the row off the phone.
+        AppSettings(serverMode = true, serverUrl = "http://unused.test", captureSound = false, addedSound = false, reviewSound = false).save(context)
+        val deletes = AtomicInteger()
+        val (vm, _) = model(client { request ->
+            when (request.method) {
+                "POST" -> 200 to JSONObject().put("status", "added").put("capture", 1)   // an answer without sync_key
+                "DELETE" -> {
+                    deletes.incrementAndGet()
+                    409 to JSONObject().put("success", false).put("message", "This capture cannot be followed")
+                }
+                else -> 409 to JSONObject().put("success", false).put("message", "This capture cannot be followed")
+            }
+        })
+        vm.identify(photo(), null)
+        await { vm.waiting.value == 0 && vm.scans.value.singleOrNull()?.server != null }
+        val id = vm.scans.value.single().id
+        vm.dismissScan(id)
+        await { vm.scans.value.single().serverCannotFollow && !vm.scans.value.single().deleting }
+        assertTrue(vm.message.value!!.contains("cannot follow"))
+        assertEquals(1, vm.scans.value.size)                    // still there after one tap
+        vm.dismissScan(id)
+        await { vm.scans.value.isEmpty() }
+        assertEquals(1, deletes.get())                          // the server was not asked again
+    }
+
+    @Test
+    fun aRemovalThatFailedForAnotherReasonKeepsItsRow() {
+        // A wrong token (401) is not "cannot follow": the row stays, however often Remove is tapped
+        AppSettings(serverMode = true, serverUrl = "http://unused.test", captureSound = false, addedSound = false, reviewSound = false).save(context)
+        val (vm, _) = model(client { request ->
+            if (request.method == "POST") 200 to JSONObject().put("status", "added").put("capture", 1).put("sync_key", "key")
+            else if (request.method == "DELETE") 401 to JSONObject().put("success", false).put("message", "Wrong or missing station token")
+            else 200 to JSONObject().put("success", true).put("state", "scanned")
+        })
+        vm.identify(photo(), null)
+        await { vm.waiting.value == 0 && vm.scans.value.singleOrNull()?.server != null }
+        val id = vm.scans.value.single().id
+        repeat(2) {
+            vm.dismissScan(id)
+            await { !vm.scans.value.single().deleting && vm.message.value?.contains("Could not remove scan") == true }
+        }
+        assertEquals(1, vm.scans.value.size)
+        assertFalse(vm.scans.value.single().serverCannotFollow)
+    }
+
+    @Test
+    fun collectedServerCaptureDisappearsFromPhone() {
+        AppSettings(serverMode = true, serverUrl = "http://unused.test", captureSound = false, addedSound = false, reviewSound = false).save(context)
+        val collected = java.util.concurrent.atomic.AtomicBoolean(false)
+        val (vm, _) = model(client { request ->
+            if (request.method == "POST") 200 to JSONObject().put("status", "added").put("capture", 1).put("sync_key", "key")
+            else {
+                assertEquals("GET", request.method)
+                assertEquals("key", request.url.queryParameter("sync_key"))
+                200 to JSONObject().put("success", true).put("state", if (collected.get()) "resolved" else "scanned")
+            }
+        })
+        vm.identify(photo(), null)
+        await { vm.waiting.value == 0 && vm.scans.value.singleOrNull()?.server != null }
+        collected.set(true)
+        await { vm.scans.value.isEmpty() }
+        assertTrue(vm.inventoryEntries.value.isEmpty())
+    }
+
+    @Test
+    fun pendingRemovalSurvivesRestart() {
+        AppSettings(serverMode = true, serverUrl = "http://unused.test", captureSound = false, addedSound = false, reviewSound = false).save(context)
+        val uploads = AtomicInteger()
+        val (vm, store) = model(client { request ->
+            check(request.method == "POST")
+            uploads.incrementAndGet()
+            throw UnknownHostException("Test offline")
+        })
+        vm.identify(photo(), null)
+        await { uploads.get() > 0 }
+        vm.dismissScan(vm.scans.value.single().id)
+        await { Outbox(context).all().single().deleteRequested }
+        instrumentation.runOnMainSync { store.clear() }
+        val deletes = AtomicInteger()
+        val (restored, _) = model(client { request ->
+            if (request.method == "POST") 200 to JSONObject().put("status", "added").put("capture", 7).put("sync_key", "key")
+            else {
+                assertEquals("DELETE", request.method)
+                assertEquals("key", request.url.queryParameter("sync_key"))
+                deletes.incrementAndGet()
+                200 to JSONObject().put("success", true).put("state", "removed")
+            }
+        })
+        await { deletes.get() == 1 && restored.waiting.value == 0 }
+        assertTrue(restored.scans.value.isEmpty())
     }
 
     @Test

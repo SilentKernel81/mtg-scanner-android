@@ -33,7 +33,7 @@ import androidx.core.content.ContextCompat
 import com.cardscanner.ui.ScannerTheme
 import com.cardscanner.ui.ScannerScreen
 import com.cardscanner.ui.SettingsScreen
-import com.cardscanner.ui.InventoryScreen
+import com.cardscanner.ui.InventoryBrowser
 import com.cardscanner.ui.ReviewScreen
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -101,10 +101,6 @@ private fun App(viewModel: ScannerViewModel) {
             BackHandler { showReview = false }
             ReviewScreen(viewModel, onClose = { showReview = false })
         }
-        showInventory -> {
-            BackHandler { showInventory = false }
-            InventoryScreen(viewModel, onBack = { showInventory = false })
-        }
         hasCamera -> ScannerScreen(viewModel, onSettings = { showSettings = true }, onInventory = { showInventory = true },
             onReview = { showReview = true })
         else -> Column(
@@ -118,4 +114,6 @@ private fun App(viewModel: ScannerViewModel) {
             }
         }
     }
+    // Keep ScannerScreen composed and its camera bound while browsing live scan progress.
+    if (showInventory) InventoryBrowser(viewModel, onClose = { showInventory = false })
 }

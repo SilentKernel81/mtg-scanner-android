@@ -77,7 +77,8 @@ private enum class Sort(val label: String, val comparator: Comparator<InventoryE
 
 /** The saved inventory: totals, sort / filter, export (CSV / Moxfield), import, edit or remove entries */
 @Composable
-fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
+fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit,
+                    tabs: @Composable () -> Unit = {}) {
     val entries by viewModel.inventoryEntries.collectAsStateWithLifecycle()
     val importStatus by viewModel.importStatus.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("") }
@@ -95,6 +96,7 @@ fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
             "${entries.sumOf { it.quantity }} cards · ${entries.size} entries · $%.2f".format(entries.sumOf { it.priceUsd * it.quantity }), onBack) {
             IconButton(onClick = { confirmClear = true }, enabled = entries.isNotEmpty()) { Icon(Icons.Default.DeleteSweep, "Clear inventory") }
         }
+        tabs()
         FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ExportFormat.entries.forEach { format ->
                 OutlinedButton(onClick = { viewModel.export(format) }, enabled = entries.isNotEmpty(),

@@ -32,6 +32,34 @@ class Outbox(context: Context) {
         internal val foilFile get() = File(dir, "${captureId}_foil.jpg")
         internal val metaFile get() = File(dir, "$captureId.json")
 
+        val deleteRequested: Boolean
+            get() = synchronized(this@Outbox) { metaFile.isFile && JSONObject(metaFile.readText()).optBoolean("delete_requested") }
+
+        /** Retries and queued removals belong to the server that first received this capture. */
+        fun bindServer(url: String, station: String) = synchronized(this@Outbox) {
+            val data = JSONObject(metaFile.readText())
+            if (data.has("server_url")) {
+                if (data.getString("server_url") != url || data.getString("station_id") != station)
+                    throw com.cardscanner.server.ServerRefused("Restore the original server and station to finish this capture")
+                return@synchronized
+            }
+            writeMeta(data.put("server_url", url).put("station_id", station))
+        }
+
+        fun requestDeletion() = synchronized(this@Outbox) {
+            val data = JSONObject(metaFile.readText()).put("delete_requested", true)
+            writeMeta(data)
+        }
+
+        private fun writeMeta(data: JSONObject) {
+            val atomic = AtomicFile(metaFile)
+            val stream = atomic.startWrite()
+            try {
+                stream.write(data.toString().toByteArray(Charsets.UTF_8))
+                atomic.finishWrite(stream)
+            } catch (e: Exception) { atomic.failWrite(stream); throw e }
+        }
+
         /** The photo, or null if its file is gone or unreadable */
         fun card(): Bitmap? = BitmapFactory.decodeFile(cardFile.path)
 

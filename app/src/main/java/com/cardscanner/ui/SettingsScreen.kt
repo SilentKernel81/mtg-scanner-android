@@ -172,7 +172,7 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         }
         }
         NumberField("Minimum sharpness", settings.minSharpness,
-            "Cards below it are not auto-captured. Lower it if cards never become Ready (see the live value under the camera).") {
+            "Cards below it are not auto-captured. Lower it if cards never become Ready.") {
             viewModel.updateSettings(settings.copy(minSharpness = it))
         }
         NumberField("Still frames before capture", settings.stableFrames, "Consecutive still, sharp frames.") {
