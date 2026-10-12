@@ -72,7 +72,7 @@ repository as `../scanner-server`):
 | `detection/CardOutline.kt` | `object_detector.py` (`find_card_outline`, `warp_card`) | both modes |
 | `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds) - no focus sweep: the phone's continuous autofocus | both modes |
 | `Outbox.kt`, `ScannerViewModel.process` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
-| `server/ScannerServer.kt` | `app.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
+| `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
 | `ai/CardIdentifier.kt`, `ai/Prompts.kt` | `card_identifier.py`, `prompts.py` (`BUILT_IN['mtg']`) | standalone |
 | `scryfall/Scryfall.kt` | `database.py:search_card_exact` (same steps and `match` tags; offline data first, then the Scryfall API) | standalone |
 | `scryfall/CardDatabase.kt` | `database.py` card table: Scryfall's default cards downloaded in Settings (~80 MB, ~1.5 min), trimmed; fuzzy names like `names_match` | standalone |

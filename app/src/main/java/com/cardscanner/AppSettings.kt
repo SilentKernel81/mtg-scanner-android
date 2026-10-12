@@ -29,7 +29,7 @@ data class AppSettings(
     /** Sound effects: capture, added to the inventory, sent to the review queue */
     val sounds: Boolean = true,
     /**
-     * Client mode: captured cards are sent to a scanner server (the Python project's app.py),
+     * Client mode: captured cards are sent to a scanner server (the Python project's server/),
      * which reads them, finds the printing and keeps the collection. Off: standalone - this app
      * does all of that itself
      */
