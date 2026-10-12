@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -19,7 +21,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +55,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val settingsError by viewModel.settingsError.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var localModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var localStatus by remember { mutableStateOf<String?>(null) }
@@ -61,15 +63,14 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
 
     Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Settings", style = MaterialTheme.typography.titleLarge)
-        }
+        ScreenHeader("Settings", "Make the scanner yours", onBack)
 
-        ServerSection(viewModel)
-        HorizontalDivider()
+        settingsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        FeedCard { ServerSection(viewModel) }
 
         if (!settings.serverMode) {
+        FeedCard {
         Text("Vision AI", style = MaterialTheme.typography.titleMedium)
         Dropdown("Provider", provider.label, Provider.entries.map { it.label }) {
             viewModel.updateSettings(settings.copy(provider = Provider.entries[it]))
@@ -148,11 +149,10 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
             }
         }
 
-        HorizontalDivider()
-        CardDataSection(viewModel)
-
-        HorizontalDivider()
+        }
+        FeedCard { CardDataSection(viewModel) }
         }  // standalone only: in client mode the server reads the cards and looks them up
+        FeedCard {
         Text("Scanning", style = MaterialTheme.typography.titleMedium)
         if (!settings.serverMode) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -165,19 +165,11 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Add confirmed cards automatically")
-                Text("Cards matched by set + number go into the inventory right away (Undo in the list); uncertain ones go to the review queue and scanning goes on. Off: every card waits for Add",
+                Text("Exact matches go straight to inventory, with Undo available. Other cards wait for review. Turn this off to confirm every Add.",
                     style = MaterialTheme.typography.bodySmall)
             }
             Switch(settings.autoAdd, { viewModel.updateSettings(settings.copy(autoAdd = it)) })
         }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Sounds")
-                Text("Click on capture, ding when a card is added, three beeps when it goes to the review queue",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            Switch(settings.sounds, { viewModel.updateSettings(settings.copy(sounds = it)) })
         }
         NumberField("Minimum sharpness", settings.minSharpness,
             "Cards below it are not auto-captured. Lower it if cards never become Ready (see the live value under the camera).") {
@@ -186,8 +178,21 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         NumberField("Still frames before capture", settings.stableFrames, "Consecutive still, sharp frames.") {
             viewModel.updateSettings(settings.copy(stableFrames = it.coerceIn(1, 60)))
         }
-        // Every change is saved as it is made; Save just closes the page
-        Button(onClick = onBack, Modifier.fillMaxWidth()) { Text("Save") }
+        }
+        FeedCard {
+            Text("Sounds", style = MaterialTheme.typography.titleMedium)
+            SoundToggle("Capture", "A short shutter click", settings.captureSound) {
+                viewModel.updateSettings(settings.copy(captureSound = it))
+            }
+            SoundToggle("Added to inventory", "A two-note chime", settings.addedSound) {
+                viewModel.updateSettings(settings.copy(addedSound = it))
+            }
+            SoundToggle("Sent to review", "Three short beeps", settings.reviewSound) {
+                viewModel.updateSettings(settings.copy(reviewSound = it))
+            }
+        }
+        // Every change is saved as it is made; Done just closes the page
+        Button(onClick = onBack, Modifier.fillMaxWidth()) { Text("Done") }
     }
 }
 
@@ -204,7 +209,7 @@ private fun ServerSection(viewModel: ScannerViewModel) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("Send cards to a scanner server")
-            Text("The phone finds and captures the cards; the server reads them and keeps the collection. Uncertain cards wait in the server's review queue; without a connection, captures wait on the phone and are sent when it is back. Off: this phone does everything itself, with its own inventory - which is not touched while this is on.",
+            Text("Let a server identify cards and manage your collection. Captures wait safely on this phone when offline. Your local inventory stays separate.",
                 style = MaterialTheme.typography.bodySmall)
         }
         Switch(settings.serverMode, { viewModel.updateSettings(settings.copy(serverMode = it)) })
@@ -298,4 +303,16 @@ private fun CardDataSection(viewModel: ScannerViewModel) {
         if (state.busy) androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
     }
     if (state.busy) Text("Keep the app open until it is done.", style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun SoundToggle(title: String, description: String, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().toggleable(value = enabled, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(enabled, onCheckedChange = null)
+    }
 }

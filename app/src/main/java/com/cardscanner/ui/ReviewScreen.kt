@@ -94,24 +94,20 @@ private fun ReviewItemView(viewModel: ScannerViewModel, item: ReviewItem, remain
     }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close") }
-            Column(Modifier.weight(1f)) {
-                Text("Review ($remaining)", style = MaterialTheme.typography.titleLarge)
-                Text(item.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-            }
-        }
+        ScreenHeader("Review · $remaining left", item.reason, onClose)
         PrintingSearchGrid(search, selected?.id, ::choose, Modifier.fillMaxSize()) {
+            FeedCard {
             // The photo beside the chosen printing
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                photo?.let { Image(it.asImageBitmap(), "Captured card", Modifier.height(220.dp).clip(RoundedCornerShape(6.dp))) }
+                photo?.let { Image(it.asImageBitmap(), "Captured card", Modifier.height(220.dp).clip(RoundedCornerShape(12.dp))) }
                 Column(Modifier.weight(1f)) {
                     selected?.let { p ->
-                        AsyncImage(p.imageUrl, p.name, Modifier.height(150.dp).aspectRatio(63f / 88f).clip(RoundedCornerShape(6.dp)))
+                        AsyncImage(p.imageUrl, p.name, Modifier.height(150.dp).aspectRatio(63f / 88f).clip(RoundedCornerShape(12.dp)))
                         Text(p.name, fontWeight = FontWeight.SemiBold)
                         Text("${p.setName} (${p.setCode}) #${p.collectorNumber}", style = MaterialTheme.typography.bodySmall)
                     } ?: Text("Pick the printing below", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
             }
             Text("AI read: ${item.name.ifEmpty { "?" }} #${item.number.ifEmpty { "?" }} [${item.setCode.ifEmpty { "?" }}]" +
                 when (item.foil) { Foil.FOIL -> " · ★"; Foil.NON_FOIL -> " · •"; Foil.UNKNOWN -> "" },

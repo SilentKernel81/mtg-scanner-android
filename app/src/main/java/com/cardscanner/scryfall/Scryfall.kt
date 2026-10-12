@@ -56,8 +56,20 @@ class Scryfall(private val http: OkHttpClient, private val local: CardDatabase? 
      * missing there - newer than the data - is looked up online), else online
      */
     fun find(name: String, collectorNumber: String, setCode: String): Printing? {
-        offline?.let { db -> findOffline(db, name, collectorNumber, setCode)?.let { return it } }
-        return findOnline(name, collectorNumber, setCode)
+        val cached = offline?.read { db -> findOffline(db, name, collectorNumber, setCode) }
+        // Exact set+number is definitive. Other local matches can hide a printing released
+        // since the last download (including a number guessed one digit away).
+        if (cached?.match == "set_number" || (setCode.isBlank() && cached?.confirmed == true)) return cached
+        return try {
+            val online = findOnline(name, collectorNumber, setCode)
+            when {
+                online?.confirmed == true -> online
+                cached?.confirmed == true -> cached
+                else -> online ?: cached
+            }
+        } catch (e: IOException) {
+            cached ?: throw e
+        }
     }
 
     /** find() on the offline data: the same steps and match tags as online */
@@ -145,9 +157,22 @@ class Scryfall(private val http: OkHttpClient, private val local: CardDatabase? 
         }
         if (name.isBlank()) return emptyList()
         val exactName = get("/cards/named", "fuzzy" to name)?.getString("name") ?: return emptyList()
-        val found = get("/cards/search", "q" to "!\"$exactName\"", "unique" to "prints", "include_extras" to "true", "order" to "released")
-            ?.optJSONArray("data") ?: return emptyList()
-        val all = (0 until found.length()).map { printing(found.getJSONObject(it), "chosen") }
+        val first = get("/cards/search", "q" to "!\"$exactName\"", "unique" to "prints", "include_extras" to "true", "order" to "released")
+            ?: return emptyList()
+        val all = ArrayList<Printing>()
+        var page = first
+        val seen = HashSet<String>()
+        while (true) {
+            val found = page.optJSONArray("data") ?: throw IOException("Scryfall: missing printing data")
+            for (i in 0 until found.length()) all.add(printing(found.getJSONObject(i), "chosen"))
+            if (!page.optBoolean("has_more")) break
+            val next = page.optString("next_page").toHttpUrl()
+            if (next.scheme != "https" || next.host != "api.scryfall.com" || !seen.add(next.toString())) {
+                throw IOException("Scryfall: invalid next page")
+            }
+            Thread.sleep(100)
+            page = getUrl(next) ?: throw IOException("Scryfall: missing next page")
+        }
         return all.sortedBy { if (set.isNotEmpty() && it.setCode.equals(set, ignoreCase = true)) 0 else 1 }
     }
 
@@ -234,6 +259,10 @@ class Scryfall(private val http: OkHttpClient, private val local: CardDatabase? 
 
     private fun get(path: String, vararg query: Pair<String, String>): JSONObject? {
         val url = "$API$path".toHttpUrl().newBuilder().apply { query.forEach { addQueryParameter(it.first, it.second) } }.build()
+        return getUrl(url)
+    }
+
+    private fun getUrl(url: okhttp3.HttpUrl): JSONObject? {
         // Scryfall asks for a User-Agent and an Accept header on every request
         val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Accept", "application/json").build()
         http.newCall(request).execute().use { response ->

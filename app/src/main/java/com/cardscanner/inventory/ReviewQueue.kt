@@ -33,7 +33,7 @@ data class ReviewItem(
  * confirmed, not found, nothing read - is queued with a copy of its photo, and scanning goes on.
  * Oldest first; kept across restarts.
  */
-class ReviewQueue(context: Context) : SQLiteOpenHelper(context, "review.db", null, 1) {
+class ReviewQueue(context: Context) : SQLiteOpenHelper(context, "review.db", null, 2) {
     private val imageDir = File(context.filesDir, "review").apply { mkdirs() }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -49,34 +49,72 @@ class ReviewQueue(context: Context) : SQLiteOpenHelper(context, "review.db", nul
                 suggested_id TEXT,
                 reason TEXT NOT NULL DEFAULT ''
             )""")
+        createReceipts(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createReceipts(db)
+    }
+
+    private fun createReceipts(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE review_receipts (capture_id TEXT PRIMARY KEY, item_id INTEGER NOT NULL)")
+    }
+
+    /** Receipts survive resolving/skipping an item, so a delayed replay cannot recreate it. */
+    @Synchronized
+    fun receipt(captureId: String): Long? =
+        readableDatabase.rawQuery("SELECT item_id FROM review_receipts WHERE capture_id = ?", arrayOf(captureId)).use {
+            if (it.moveToFirst()) it.getLong(0) else null
+        }
 
     @Synchronized
-    fun add(photo: Bitmap, name: String, number: String, setCode: String, foil: Foil, suggestedId: String?, reason: String): Long {
-        val file = File(imageDir, "${System.currentTimeMillis()}_${(0..9999).random()}.jpg")
-        file.outputStream().use { photo.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-        return writableDatabase.insertOrThrow("review_queue", null, ContentValues().apply {
-            put("created", Inventory.now())
-            put("image", file.name)
-            put("name", name)
-            put("number", number)
-            put("set_code", setCode)
-            put("foil", foil.name)
-            put("suggested_id", suggestedId)
-            put("reason", reason)
-        })
+    fun contains(id: Long): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM review_queue WHERE id = ?", arrayOf(id.toString())).use { it.moveToFirst() }
+
+    @Synchronized
+    fun add(photo: Bitmap, name: String, number: String, setCode: String, foil: Foil, suggestedId: String?, reason: String,
+            captureId: String? = null): Long {
+        captureId?.let { receipt(it) }?.let { return it }
+        val file = File(imageDir, "${java.util.UUID.randomUUID()}.jpg")
+        val db = writableDatabase
+        try {
+            file.outputStream().use {
+                check(photo.compress(Bitmap.CompressFormat.JPEG, 90, it)) { "Could not save review photo" }
+                it.fd.sync()
+            }
+            db.beginTransaction()
+            try {
+                val id = db.insertOrThrow("review_queue", null, ContentValues().apply {
+                    put("created", Inventory.now())
+                    put("image", file.name)
+                    put("name", name)
+                    put("number", number)
+                    put("set_code", setCode)
+                    put("foil", foil.name)
+                    put("suggested_id", suggestedId)
+                    put("reason", reason)
+                })
+                if (captureId != null) db.execSQL("INSERT INTO review_receipts VALUES (?, ?)", arrayOf<Any?>(captureId, id))
+                db.setTransactionSuccessful()
+                return id
+            } finally {
+                db.endTransaction()
+            }
+        } catch (e: Exception) {
+            file.delete()
+            throw e
+        }
     }
 
     /** Resolve an item (added or skipped): it and its photo go */
     @Synchronized
     fun remove(id: Long) {
         val db = writableDatabase
-        db.rawQuery("SELECT image FROM review_queue WHERE id = ?", arrayOf(id.toString())).use { c ->
-            if (c.moveToFirst()) File(imageDir, c.getString(0)).delete()
+        val image = db.rawQuery("SELECT image FROM review_queue WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst()) File(imageDir, c.getString(0)) else null
         }
         db.delete("review_queue", "id = ?", arrayOf(id.toString()))
+        image?.delete()
     }
 
     /** All items, oldest first */

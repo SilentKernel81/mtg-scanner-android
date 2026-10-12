@@ -80,15 +80,16 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
   changes there with `adb install -r` (keeps the app's data), `adb exec-out screencap -p` and
   `adb shell input tap` (screen 1080x2424). **A capture on it is real**: in client mode it goes
   to the user's server and into their scanned cards; standalone it goes into the phone's own
-  inventory. Check the mode first (`run-as com.cardscanner cat shared_prefs/settings.xml`), ask
+  inventory. Check the mode first in the Settings screen, ask
   before capturing there, and never import test CSVs or clear its inventory.
 - **Emulator** (`Pixel_Phone`): fine for UI and flows, not for reading quality - its camera is
   too low for collector numbers, and with `-camera-back emulated` it shows no card at all (use
   a fixed area to capture anyway; such captures end in the review queue). For client mode
   point it at a **test server** - a second server container with its own data folder and port -
   not at the user's real one. `adb shell cmd connectivity airplane-mode enable` / `disable`
-  tests the outbox. Settings can be prepared by writing `shared_prefs/settings.xml` through
-  `run-as` (put the original back afterwards).
+  tests the outbox. Credential fixtures must use unique preferences and Keystore aliases;
+  never overwrite real settings or dump credentials. `CredentialStorageTest` exercises migration
+  and recovery without touching user preferences.
 
 ## Where Things Live
 
@@ -97,16 +98,17 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
 | Card outline, warp (port of `object_detector.py`) | `detection/CardOutline.kt`: `findCardOutline`, `warpCard` |
 | Stillness, auto-capture, new card, fixed area (port of `scanner.py`) | `detection/CardTracker.kt`: `process`, `processArea`, `isCardSettled`, `newCardArrived` |
 | Camera frames, taking a capture | `ScannerViewModel.kt`: `analyze`, `manualCapture`, `capture`, `cutOutCard`; `ui/ScannerScreen.kt`: `CameraPreview` |
-| A capture's way: saved, processed in the current mode, retried without a network, resumed after a restart | `Outbox.kt`; `ScannerViewModel.kt`: `identify`, `showScan`, `process` (the retry loop), `isOffline`, the `init` block that resumes the outbox |
-| Client mode: the scanner server does the rest | `server/ScannerServer.kt` (`sendCapture`, `outcome`, `undo`, `test`, `ServerOutcome.parse`); `ScannerViewModel.kt`: `sendOnce`, `serverAnswered`, `undoOnServer`, `serverPageUrl`; `ui/ScannerScreen.kt`: `ServerScanRow`; `ui/SettingsScreen.kt`: `ServerSection`; the server side is `server/stations_api.py: station_capture` in `../scanner-server` |
-| Standalone: AI, printing match, add or review | `ScannerViewModel.kt`: `identifyOnce`, `finish`, `queueForReview`, `addScan`, `undoScan` |
+| A capture's way: saved, processed in the current mode, retried without a network, resumed after a restart | `Outbox.kt`; `CaptureProcessor.kt`: `enqueue`, `process` (the retry loop), `isOffline`, `resume`; display list in `ScanHistory.kt` |
+| Client mode: the scanner server does the rest | `server/ScannerServer.kt` (`sendCapture`, `outcome`, `undo`, `test`, `ServerOutcome.parse`); `CaptureProcessor.kt`: `sendOnce`, `serverAnswered`, `undoOnServer`, `serverPageUrl`; `ui/ScannerScreen.kt`: `ServerScanRow`; `ui/SettingsScreen.kt`: `ServerSection`; the server side is `server/stations_api.py: station_capture` in `../scanner-server` |
+| Standalone: AI, printing match, add or review | `CaptureProcessor.kt`: `identifyOnce`; `inventory/CollectionRepository.kt`: `queueForReview`, `addScan`, `undoScan`; finish rules in `inventory/FinishPolicy.kt` |
 | AI providers, answer parser, foil check, token use | `ai/CardIdentifier.kt`; prompts (= `prompts.py` BUILT_IN mtg) in `ai/Prompts.kt` |
 | Printing match (`search_card_exact` steps, `match` tags, `CONFIRMED`) | `scryfall/Scryfall.kt` (offline first, then the API) |
-| Offline card data (Scryfall default cards → SQLite) | `scryfall/CardDatabase.kt`; `ScannerViewModel.kt`: `downloadCardData` |
-| Inventory (SQLite, the server's table + merge key), exports, import | `inventory/Inventory.kt`, `inventory/Export.kt`, `inventory/Import.kt`; `ScannerViewModel.kt`: `importCsv`, `export` |
+| Offline card data (Scryfall default cards → SQLite) | `scryfall/CardDatabase.kt`; `scryfall/CardDataRepository.kt`: `downloadCardData` |
+| Inventory (SQLite, the server's table + merge key), exports, import | `inventory/Inventory.kt`, `inventory/Export.kt`, `inventory/Import.kt`; `inventory/CollectionRepository.kt`: `importCsv`, `export` |
 | Review queue (photo + reading + suggestion) | `inventory/ReviewQueue.kt`, `ui/ReviewScreen.kt`, printing search `ui/PrintingSearch.kt` |
 | Screens | `ui/ScannerScreen.kt` (camera, overlay, area drawing with loupe, scan list), `ui/InventoryScreen.kt`, `ui/SettingsScreen.kt`; navigation in `MainActivity.kt` |
-| Settings (SharedPreferences, saved on every change) | `AppSettings.kt` (`serverMode`, `serverUrl`, `stationId`, ...) |
+| Settings (live state, coalesced secure writes) | `AppSettings.kt`; `settings/SettingsRepository.kt`, `SettingsStorage.kt`, `CredentialCipher.kt` |
+| Visual theme and shared rounded surfaces | `ui/ScannerTheme.kt`, `ui/FeedComponents.kt` |
 | Sound effects (the web UI's beeps) | `Sounds.kt` |
 
 ## Conventions and Pitfalls
@@ -115,10 +117,22 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
   decides per attempt which mode handles it. Code for one mode must not touch the other's data:
   client mode never writes the phone's inventory or review queue.
 - **A capture is settled or it is in the outbox.** `process` removes it only when `sendOnce` /
-  `identifyOnce` return true; returning false means "nothing happened, try again" - so return
-  false only for a missing connection (`IOException` in client mode, `isOffline` standalone),
-  never after the card was added or queued. Don't keep bitmaps in memory while waiting: they
-  are reloaded from the outbox per attempt (a long offline pile would run out of memory).
+  `identifyOnce` return true. Standalone inventory/review writes include a durable capture
+  receipt in the same transaction; check receipts before replaying, even if the mode changed.
+  Cards awaiting manual Add are backed by review items. Resolving review uses an inventory
+  receipt keyed by review id, then deletes the review item; startup finishes interrupted
+  handoffs in standalone mode. Retain receipts after Undo/Skip/delete. Server pending/error/
+  refused results stay in the outbox for retry. Save photos before enqueueing work, and acquire
+  a semaphore permit before decoding them (one standalone, three server), retaining that permit
+  across suspending polls. Recycle decoded photos before backoff. Never delete a capture on
+  cancellation or a failed local write.
+- **Inventory mutations** re-read scan/review state under `inventoryMutex`; checking outside
+  the coroutine permits repeated taps to add/remove multiple copies. Receipt tables were added
+  in database version 2; upgrades preserve existing entries and photos.
+- **Card data** queries/cursor reads share a lock with database replacement/deletion. Downloads
+  use a separate update lock so existing data remains searchable during the download. Printing
+  searches must not silently truncate offline rows or online pages; weak local matches can be
+  checked online while retaining the offline fallback and the existing confidence tags.
 - **The server's answer**: `ServerOutcome.parse` must follow `station_capture`'s JSON
   (`ServerOutcomeTest` has real answers). The upload carries the outbox id as `capture_id`, so
   a repeat is one card - keep it. The server keeps one Undo per station: only the newest added
@@ -135,6 +149,9 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
 - **Fixed area** assumes the phone doesn't move (it compares a fixed spot of the image).
 - **Preview rotation** needs `PreviewView.ImplementationMode.COMPATIBLE` (TextureView); a
   SurfaceView ignores view rotation.
+- **Credential persistence**: never write API keys/station tokens in plaintext. Migration and
+  writes go through `SettingsStorage`; keep ciphertext when reads fail, and show the error in
+  Settings. Its writer must flush on teardown. Tests use synthetic secrets and isolated aliases.
 - **Property order in `ScannerViewModel`**: `init` blocks run in file order - one that uses a
   property declared further down sees `null`. The outbox is resumed from an `init` placed after
   the properties it needs.

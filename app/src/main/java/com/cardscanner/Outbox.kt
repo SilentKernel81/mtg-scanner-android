@@ -3,6 +3,7 @@ package com.cardscanner
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -34,6 +35,17 @@ class Outbox(context: Context) {
         /** The photo, or null if its file is gone or unreadable */
         fun card(): Bitmap? = BitmapFactory.decodeFile(cardFile.path)
 
+        /** Decode only enough pixels for the scan list when resuming a large backlog. */
+        fun thumbnail(): Bitmap? {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(cardFile.path, options)
+            if (options.outWidth <= 0 || options.outHeight <= 0) return null
+            options.inSampleSize = 1
+            while (options.outHeight / (options.inSampleSize * 2) >= 280) options.inSampleSize *= 2
+            options.inJustDecodeBounds = false
+            return BitmapFactory.decodeFile(cardFile.path, options)
+        }
+
         /** The flat card for the ★/• check - `card` itself, the second picture, or null (no outline) */
         fun foil(card: Bitmap): Bitmap? = when {
             foilIsCard -> card
@@ -46,9 +58,22 @@ class Outbox(context: Context) {
     @Synchronized
     fun add(card: Bitmap, foilCard: Bitmap?): Item {
         val item = Item(UUID.randomUUID().toString(), foilIsCard = foilCard === card, hasFoil = foilCard != null && foilCard !== card)
-        save(card, item.cardFile)
-        if (foilCard != null && foilCard !== card) save(foilCard, item.foilFile)
-        item.metaFile.writeText(JSONObject().put("foil_is_card", item.foilIsCard).toString())
+        try {
+            save(card, item.cardFile)
+            if (foilCard != null && foilCard !== card) save(foilCard, item.foilFile)
+            val meta = AtomicFile(item.metaFile)
+            val stream = meta.startWrite()
+            try {
+                stream.write(JSONObject().put("foil_is_card", item.foilIsCard).toString().toByteArray(Charsets.UTF_8))
+                meta.finishWrite(stream)
+            } catch (e: Exception) {
+                meta.failWrite(stream)
+                throw e
+            }
+        } catch (e: Exception) {
+            remove(item)
+            throw e
+        }
         return item
     }
 
@@ -78,6 +103,9 @@ class Outbox(context: Context) {
     fun count(): Int = dir.listFiles().orEmpty().count { it.extension == "json" }
 
     private fun save(image: Bitmap, file: File) {
-        file.outputStream().use { image.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        file.outputStream().use {
+            check(image.compress(Bitmap.CompressFormat.JPEG, 95, it)) { "Could not save capture" }
+            it.fd.sync()
+        }
     }
 }

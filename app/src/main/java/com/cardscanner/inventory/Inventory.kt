@@ -47,7 +47,7 @@ data class InventoryEntry(
  * set + number + condition + finish), plus the Scryfall image. Magic only for now (game = 'mtg').
  * Client mode never writes here: those cards are the server's.
  */
-class Inventory(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 1) {
+class Inventory(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""
@@ -72,16 +72,32 @@ class Inventory(context: Context) : SQLiteOpenHelper(context, "inventory.db", nu
                 image_url TEXT,
                 UNIQUE(game, card_name, set_name, card_number, condition, finish)
             )""")
+        createReceipts(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createReceipts(db)
+    }
+
+    private fun createReceipts(db: SQLiteDatabase) {
+        // Retain receipts after Undo/delete: replaying an outbox item must not restore it.
+        db.execSQL("CREATE TABLE inventory_receipts (operation_id TEXT PRIMARY KEY, entry_id INTEGER NOT NULL)")
+    }
+
+    @Synchronized
+    fun receipt(operationId: String): Long? =
+        readableDatabase.rawQuery("SELECT entry_id FROM inventory_receipts WHERE operation_id = ?", arrayOf(operationId)).use {
+            if (it.moveToFirst()) it.getLong(0) else null
+        }
 
     /**
      * Add copies of a printing - merged with an existing entry for the same card, set, number,
      * condition and finish. Returns the entry's id.
      */
     @Synchronized
-    fun add(printing: Printing, finish: Finish, condition: String = "Near Mint", quantity: Int = 1, timestamp: String = now()): Long {
+    fun add(printing: Printing, finish: Finish, condition: String = "Near Mint", quantity: Int = 1,
+            timestamp: String = now(), operationId: String? = null): Long {
+        require(quantity > 0) { "Quantity must be positive" }
         // Foil and surge foil copies are priced as foils; fall back to the other price if missing
         val prices = if (finish == Finish.REGULAR) listOf(printing.usd, printing.usdFoil) else listOf(printing.usdFoil, printing.usd)
         val price = prices.firstNotNullOfOrNull { it?.toDoubleOrNull() } ?: 0.0
@@ -89,6 +105,10 @@ class Inventory(context: Context) : SQLiteOpenHelper(context, "inventory.db", nu
         // Upsert by hand: ON CONFLICT ... DO UPDATE needs SQLite 3.24 (Android 11); minSdk 26 has 3.18
         db.beginTransaction()
         try {
+            operationId?.let { receipt(it) }?.let {
+                db.setTransactionSuccessful()
+                return it
+            }
             val existing = findId(db, printing.name, printing.setName, printing.collectorNumber, condition, finish.key)
             val id = if (existing != null) {
                 db.execSQL("""UPDATE inventory SET quantity = quantity + ?, timestamp = MAX(timestamp, ?), price_usd = ?,
@@ -116,6 +136,9 @@ class Inventory(context: Context) : SQLiteOpenHelper(context, "inventory.db", nu
                     put("timestamp", timestamp)
                     put("image_url", printing.imageUrl)
                 })
+            }
+            if (operationId != null) {
+                db.execSQL("INSERT INTO inventory_receipts VALUES (?, ?)", arrayOf<Any?>(operationId, id))
             }
             db.setTransactionSuccessful()
             return id

@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -88,7 +89,7 @@ fun PrintingSearchGrid(state: PrintingSearchState, selectedId: String?, onSelect
                 header()
                 OutlinedTextField(state.name, { state.name = it }, Modifier.fillMaxWidth(), label = { Text("Card name") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { state.search() }))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(state.setCode, { state.setCode = it }, Modifier.width(90.dp), label = { Text("Set") }, singleLine = true)
                     OutlinedTextField(state.number, { state.number = it }, Modifier.width(100.dp), label = { Text("Number") }, singleLine = true)
                     OutlinedButton(onClick = { state.search() }, enabled = !state.searching) { Text("Search") }
@@ -100,10 +101,10 @@ fun PrintingSearchGrid(state: PrintingSearchState, selectedId: String?, onSelect
         }
         items(state.results, key = { it.id }) { p ->
             val chosen = p.id == selectedId
-            Column(Modifier.clickable { onSelect(p) }
-                .then(if (chosen) Modifier.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), RoundedCornerShape(6.dp)) else Modifier)
+            Column(Modifier.clip(RoundedCornerShape(16.dp)).clickable { onSelect(p) }
+                .then(if (chosen) Modifier.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), RoundedCornerShape(16.dp)) else Modifier)
                 .padding(3.dp)) {
-                AsyncImage(p.imageUrl, p.name, Modifier.fillMaxWidth().aspectRatio(63f / 88f).clip(RoundedCornerShape(4.dp)))
+                AsyncImage(p.imageUrl, p.name, Modifier.fillMaxWidth().aspectRatio(63f / 88f).clip(RoundedCornerShape(12.dp)))
                 Text("${p.setCode} #${p.collectorNumber}", style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
         }

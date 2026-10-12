@@ -3,9 +3,12 @@ package com.cardscanner
 import com.cardscanner.server.ScannerServer
 import com.cardscanner.server.ServerCard
 import com.cardscanner.server.ServerOutcome
+import com.cardscanner.server.ServerRefused
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /** The server's answers to a capture, as app.py's station_capture really sent them (2026-10-08) */
@@ -43,5 +46,22 @@ class ServerOutcomeTest {
         assertEquals("http://192.168.1.20:5000", ScannerServer.normalize(" 192.168.1.20:5000/ "))
         assertEquals("https://cards.example", ScannerServer.normalize("https://cards.example/"))
         assertEquals("", ScannerServer.normalize("  "))
+    }
+
+    @Test
+    fun invalidAddressesAreRecoverableConfigurationErrors() {
+        for (url in listOf("", " ", "http://", "ftp://cards.example", "http://bad host:5000", "https://cards.example?token=x", "https://user:pass@cards.example")) {
+            assertThrows("Address: $url", ServerRefused::class.java) { ScannerServer.validatedUrl(url) }
+            // This previously constructed an invalid Request before send() could validate it.
+            assertThrows(ServerRefused::class.java) {
+                ScannerServer(url, "phone-test", "Test", "", OkHttpClient()).test()
+            }
+        }
+    }
+
+    @Test
+    fun addressesSupportLocalPortsAndProxyPaths() {
+        assertEquals("http://192.168.1.20:5000/", ScannerServer.validatedUrl("192.168.1.20:5000").toString())
+        assertEquals("https://cards.example/scanner", ScannerServer.validatedUrl("https://cards.example/scanner/").toString())
     }
 }

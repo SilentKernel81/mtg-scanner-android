@@ -2,6 +2,7 @@ package com.cardscanner.server
 
 import android.graphics.Bitmap
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -79,8 +80,11 @@ class ScannerServer(serverUrl: String, private val stationId: String, private va
     /** This station's page on the server: its cards and its review queue */
     val pageUrl get() = "$baseUrl/scan/$stationId"
 
-    private fun request(path: String) = Request.Builder().url("$baseUrl$path").apply {
-        if (token.isNotBlank()) header("X-Station-Token", token)
+    private fun request(path: String): Request.Builder {
+        val base = validatedUrl(baseUrl)
+        return Request.Builder().url(base.newBuilder().encodedPath(base.encodedPath.trimEnd('/') + path).build()).apply {
+            if (token.isNotBlank()) header("X-Station-Token", token)
+        }
     }
 
     private fun send(request: Request): Pair<Int, JSONObject> {
@@ -102,6 +106,7 @@ class ScannerServer(serverUrl: String, private val stationId: String, private va
      * Waits up to `waitSeconds` for the outcome, which is PENDING after that (ask with outcome()).
      */
     fun sendCapture(card: Bitmap, foilCard: Bitmap?, captureId: String, waitSeconds: Int = 30): ServerOutcome {
+        val request = request("/api/stations/$stationId/captures")
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("name", stationName)
             .addFormDataPart("capture_id", captureId)
@@ -109,7 +114,7 @@ class ScannerServer(serverUrl: String, private val stationId: String, private va
             .addFormDataPart("image", "card.jpg", jpeg(card).toRequestBody(JPEG))
         if (foilCard === card) body.addFormDataPart("foil_is_image", "1")
         else if (foilCard != null) body.addFormDataPart("foil_image", "foil.jpg", jpeg(foilCard).toRequestBody(JPEG))
-        return ServerOutcome.parse(send(request("/api/stations/$stationId/captures").post(body.build()).build()).second)
+        return ServerOutcome.parse(send(request.post(body.build()).build()).second)
     }
 
     /** What became of a capture that was still PENDING */
@@ -135,8 +140,22 @@ class ScannerServer(serverUrl: String, private val stationId: String, private va
 
         /** "192.168.1.20:5000/" -> "http://192.168.1.20:5000" */
         fun normalize(url: String): String {
-            val trimmed = url.trim().trimEnd('/')
-            return if (trimmed.isEmpty() || "://" in trimmed) trimmed else "http://$trimmed"
+            val trimmed = url.trim()
+            val base = if (trimmed.isEmpty() || "://" in trimmed) trimmed else "http://$trimmed"
+            // Keep an incomplete scheme incomplete, so validation rejects "http://".
+            return if (base.substringAfter("://").all { it == '/' }) base else base.trimEnd('/')
+        }
+
+        /** Only HTTP(S) addresses without credentials, query strings or fragments are server bases. */
+        internal fun validatedUrl(url: String): okhttp3.HttpUrl {
+            val normalized = normalize(url)
+            if (normalized.isEmpty()) throw ServerRefused("No server address - set it in Settings")
+            val parsed = normalized.toHttpUrlOrNull()
+                ?: throw ServerRefused("Invalid server address - use an HTTP or HTTPS URL")
+            if (parsed.username.isNotEmpty() || parsed.password.isNotEmpty() || parsed.query != null || parsed.fragment != null) {
+                throw ServerRefused("Server address must not contain credentials, a query or a fragment")
+            }
+            return parsed
         }
 
         private fun jpeg(image: Bitmap): ByteArray =

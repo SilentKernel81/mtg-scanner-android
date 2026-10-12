@@ -56,7 +56,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
-import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,7 +75,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -122,15 +121,18 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
-    // The camera frames are 3:4, or 4:3 when turned a quarter; at most half the height, so the
+    // The camera frames are 3:4, or 4:3 when turned a quarter; bounded in height so the
     // controls and results stay visible
     val sideways = settings.rotation % 180 != 0
     val aspect = if (sideways) 4f / 3f else 3f / 4f
-    val cameraWidth = minOf(maxWidth, maxHeight * 0.5f * aspect)
+    val cameraWidth = minOf(maxWidth - 24.dp, maxHeight * 0.38f * aspect)
     Column(Modifier.fillMaxSize()) {
+        ScreenHeader("Card Scanner", if (settings.serverMode) "Server mode · captures saved before sending" else "Scan. Collect. Repeat.") {
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
+        }
         // Camera view with the detected outline: 3:4 like the (portrait) camera frames, so frame
         // coordinates map linearly onto it
-        Box(Modifier.width(cameraWidth).aspectRatio(aspect).align(Alignment.CenterHorizontally).clipToBounds().background(Color.Black)) {
+        Box(Modifier.width(cameraWidth).aspectRatio(aspect).align(Alignment.CenterHorizontally).clip(RoundedCornerShape(24.dp)).background(Color.Black)) {
             CameraPreview(viewModel, torch, settings.rotation)
             if (drawingArea) {
                 AreaDrawer(
@@ -148,33 +150,32 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
             }
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Switch(checked = auto, onCheckedChange = viewModel::setAutoCapture)
-            Text("Auto", Modifier.padding(start = 8.dp))
-            Spacer(Modifier.weight(1f))
-            Button(onClick = viewModel::manualCapture) { Text("Capture") }
-            // Fixed area: draw it the first time, then switch between area and outline
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = auto, onCheckedChange = viewModel::setAutoCapture)
+                Text("Auto scan", Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelLarge)
+            }
+            Button(onClick = viewModel::manualCapture, modifier = Modifier.weight(1f)) { Text("Capture card") }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = {
                 if (settings.fixedArea == null) drawingArea = true else viewModel.setFixedAreaEnabled(!settings.fixedAreaEnabled)
             }) {
                 Icon(Icons.Default.Crop, "Fixed area", tint = if (areaOn) MaterialTheme.colorScheme.primary else LocalContentColor.current)
             }
-            IconButton(onClick = viewModel::rotate) { Icon(Icons.Default.RotateRight, "Rotate image") }
+            IconButton(onClick = viewModel::rotate) { Icon(Icons.AutoMirrored.Filled.RotateRight, "Rotate image") }
             IconButton(onClick = { torch = !torch }) {
                 Icon(if (torch) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light")
             }
-            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Settings") }
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Compact: the area's own switch is the highlighted crop icon above
             if (areaOn) TextButton(onClick = { drawingArea = true }) { Text("Redraw area") }
             Spacer(Modifier.weight(1f))
             if (scans.isNotEmpty()) {
                 IconButton(onClick = viewModel::clearScans) { Icon(Icons.Default.DeleteSweep, "Clear the list") }
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(8.dp))
             if (settings.serverMode) {
                 // Client mode: the cards and the review queue are the server's - this phone's page there
                 TextButton(onClick = {
@@ -184,13 +185,13 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
                 }) { Text("Cards and review on the server", maxLines = 1) }
             } else {
                 if (review.isNotEmpty()) {
-                    TextButton(onClick = onReview) {
+                    FilledTonalButton(onClick = onReview) {
                         Text("Review ${review.size}", color = MaterialTheme.colorScheme.tertiary, maxLines = 1)
                     }
                 }
-                TextButton(onClick = onInventory) {
+                FilledTonalButton(onClick = onInventory, modifier = Modifier.padding(start = 8.dp)) {
                     Icon(Icons.Default.Inventory2, null, Modifier.size(18.dp))
-                    Text("${entries.sumOf { it.quantity }}", Modifier.padding(start = 4.dp), maxLines = 1)
+                    Text("Inventory · ${entries.sumOf { it.quantity }}", Modifier.padding(start = 4.dp), maxLines = 1)
                 }
             }
         }
@@ -220,10 +221,16 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
         // was on top in view, and new cards pile up hidden above it)
         val listState = rememberLazyListState()
         LaunchedEffect(scans.firstOrNull()?.id) { if (scans.isNotEmpty()) listState.animateScrollToItem(0) }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(top = 4.dp), state = listState) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState,
+            contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (scans.isEmpty()) item {
+                EmptyFeed("Ready for your next find?", "Place a card in view and tap Capture card, or turn on Auto scan.")
+            }
             items(scans, key = { it.id }) {
-                if (it.server != null) ServerScanRow(it, canUndo = it.id == serverUndo, onUndo = viewModel::undoOnServer)
-                else ScanRow(it, onAdd = { viewModel.addScan(it.id) }, onUndo = { viewModel.undoScan(it.id) })
+                FeedCard {
+                    if (it.server != null) ServerScanRow(it, canUndo = it.id == serverUndo, onUndo = viewModel::undoOnServer)
+                    else ScanRow(it, onAdd = { viewModel.addScan(it.id) }, onUndo = { viewModel.undoScan(it.id) })
+                }
             }
         }
     }
@@ -330,8 +337,8 @@ private fun StatusChip(state: CardTracker.State?, auto: Boolean, modifier: Modif
     }
     Text(
         text,
-        modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 8.dp, vertical = 4.dp),
-        color = statusColor(state?.status),
+        modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.8f)).padding(horizontal = 8.dp, vertical = 4.dp),
+        color = if (state == null || state.status == CardTracker.Status.NO_CARD) Color.White else statusColor(state.status),
         style = MaterialTheme.typography.labelLarge,
     )
 }
@@ -345,12 +352,12 @@ private fun ScanRow(scan: ScanResult, onAdd: () -> Unit, onUndo: () -> Unit) {
             .clickable(enabled = printing != null) {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(printing!!.scryfallUrl)))
             }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(4.dp)))
+        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(10.dp)))
         if (printing?.imageUrl != null) {
-            AsyncImage(printing.imageUrl, "Scryfall image", Modifier.height(96.dp).width(69.dp).clip(RoundedCornerShape(4.dp)))
+            AsyncImage(printing.imageUrl, "Scryfall image", Modifier.height(96.dp).width(69.dp).clip(RoundedCornerShape(10.dp)))
         }
         Column(Modifier.weight(1f)) {
             when (scan.status) {
@@ -381,7 +388,7 @@ private fun ScanRow(scan: ScanResult, onAdd: () -> Unit, onUndo: () -> Unit) {
                     scan.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     if (printing != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (scan.reviewId != null) {
+                            if (scan.reviewId != null && !scan.pendingAdd) {
                                 Text("In the review queue", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
                             } else if (scan.inventoryId != null) {
                                 Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = Color(0xFF00C853))
@@ -417,8 +424,8 @@ private fun ScanRow(scan: ScanResult, onAdd: () -> Unit, onUndo: () -> Unit) {
 @Composable
 private fun ServerScanRow(scan: ScanResult, canUndo: Boolean, onUndo: () -> Unit) {
     val outcome = scan.server ?: return
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(4.dp)))
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Image(scan.thumbnail.asImageBitmap(), "Captured card", Modifier.height(96.dp).clip(RoundedCornerShape(10.dp)))
         Column(Modifier.weight(1f)) {
             val card = outcome.card
             Text(card?.name ?: outcome.readName.ifEmpty { "Not read" }, fontWeight = FontWeight.SemiBold)

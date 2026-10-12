@@ -5,7 +5,7 @@ onto a pile: the camera finds each card by its outline (or a fixed area), captur
 lies still, and the card is identified down to the exact printing and finish.
 
 > **Built with AI.** All of this app - the code, the tests and this documentation - was
-> written by an AI coding assistant (Claude, through Claude Code), directed by the project's
+> written by AI coding assistants (Claude through Claude Code, and OpenAI Codex), directed by the project's
 > author. See [How this project was built](#how-this-project-was-built).
 
 Native Kotlin (Jetpack Compose, CameraX, OpenCV). It works in two ways, switched in Settings:
@@ -38,7 +38,9 @@ this app - and keeps one collection. The phone is one of its *stations*.
 into the phone's inventory right away, with an Undo in the list; anything uncertain goes to
 the review queue with its photo - the suggested printing, what the AI read, a search to
 correct it, *Identify again*. With *Add confirmed cards automatically* off, every card waits
-for **Add**. The inventory can be sorted, filtered, edited, exported (CSV, Moxfield) and
+for **Add**. These waiting cards are also saved in the review queue, so they survive restarting
+the app, clearing the scan list, or scanning more than the list's 100-card limit.
+The inventory can be sorted, filtered, edited, exported (CSV, Moxfield) and
 imported. Settings has the AI provider, model and key (or a local server's address), the
 offline card data (~80 MB, so lookups work without internet), the foil check and the capture
 thresholds.
@@ -71,7 +73,7 @@ repository as `../scanner-server`):
 |---|---|---|
 | `detection/CardOutline.kt` | `object_detector.py` (`find_card_outline`, `warp_card`) | both modes |
 | `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds) - no focus sweep: the phone's continuous autofocus | both modes |
-| `Outbox.kt`, `ScannerViewModel.process` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
+| `Outbox.kt`, `CaptureProcessor.kt` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
 | `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
 | `ai/CardIdentifier.kt`, `ai/Prompts.kt` | `card_identifier.py`, `prompts.py` (`BUILT_IN['mtg']`) | standalone |
 | `scryfall/Scryfall.kt` | `database.py:search_card_exact` (same steps and `match` tags; offline data first, then the Scryfall API) | standalone |
@@ -81,11 +83,34 @@ repository as `../scanner-server`):
 | `inventory/Export.kt` | `games/base.py:write_collection_csv` - byte-identical (`ExportParityTest`); `games/mtg.py:write_moxfield` | standalone |
 | `inventory/Import.kt` | `inventory.py:import_csv`, `Magic.import_rows` - the same files, looked up on Scryfall by set + number, then name | standalone |
 
+`ScannerViewModel` owns the camera and coordinates the screen APIs. `CaptureProcessor` owns
+outbox processing, bounded concurrency, retries and server operations. `CollectionRepository`
+owns inventory/review handoffs, import/export and collection state; `CardDataRepository` owns
+offline data management. `ScanHistory` holds the bounded display list, and `FinishPolicy` shares
+the finish rules between capture and review.
+
+Settings state and serialized background writes live in `settings/SettingsRepository.kt`.
+API keys and the station token are stored together as an authenticated AES-256-GCM payload,
+using a non-exportable Android Keystore key and a fresh IV for each changed payload. Ordinary
+preferences remain in SharedPreferences. Existing plaintext credentials migrate on load;
+ciphertext and removal of the old entries are committed together. Encryption failure preserves
+the existing copy and shows an error in Settings. Unreadable credentials also show an error;
+unrelated settings edits preserve the encrypted payload until the user re-enters their keys
+and station token. The writer coalesces edits and flushes the latest snapshot on ViewModel
+teardown. Settings snapshots redact credentials in their string representation.
+
+The interface uses a shared light/dark theme (`ui/ScannerTheme.kt`) with a warm orange accent,
+rounded feed cards, pill buttons and grouped settings panels. The Sounds panel has independent
+capture, added-to-inventory and sent-to-review switches, shared by standalone and server mode.
+Existing sound preferences migrate without unmuting previously disabled cues. `ui/FeedComponents.kt` provides
+the shared headers, card containers and empty states. Camera preview dimensions retain the
+sensor aspect ratio so detection overlays and fixed-area gestures stay aligned.
+
 ### A capture's way
 
 `ScannerViewModel.capture` takes a full-resolution still, finds the card in it again and cuts
 it out flat (`cutOutCard`; in fixed-area mode the photo is the area). From there
-`ScannerViewModel.process`:
+`CaptureProcessor.enqueue` / `process`:
 
 1. saves the capture in the **outbox** (`Outbox.kt`: `files/outbox/<id>.jpg`, a second picture
    for the foil check in fixed-area mode, and a small `.json` written last);
@@ -93,8 +118,19 @@ it out flat (`cutOutCard`; in fixed-area mode the photo is the area). From there
    `identifyOnce` (standalone);
 3. if there is no connection, waits and tries again (2 s, 4 s, ... 30 s apart), holding the
    pictures only on disk meanwhile;
-4. removes it from the outbox once it is settled: the server answered, or the card was
-   identified (added, in the review queue, or waiting for Add).
+4. removes it from the outbox once it is settled: the server added it or queued it for review,
+   or it was saved locally in the inventory or review queue (including cards waiting for Add).
+
+Local writes record the capture id in the same transaction as the inventory/review entry.
+If the app stops after that write but before removing the outbox photo, restarting does not
+add another copy. Resolving a review item uses a separate inventory receipt so that handoff
+can also resume safely. Database version 2 adds these receipt tables without replacing existing
+cards or review photos; receipts remain after Undo or Skip to prevent replay from restoring them.
+
+Only one standalone capture or three server captures load full-resolution photos at a time.
+This limit also applies while waiting for a server's pending result. The rest remain on disk;
+startup decodes small thumbnails for the scan list. A capture that cannot be saved stops Auto
+and asks for another capture after freeing storage.
 
 When the app starts, what is still in the outbox is taken up again. A capture made standalone
 without a network goes to the server if the app was switched to client mode meanwhile, and
@@ -105,11 +141,18 @@ the other way round.
   sent again after no answer is still one card on the server. The answer (`ServerOutcome`) is
   *added*, *review*, or *pending* - then `outcome()` asks again every 2 s. Undo calls
   `/api/stations/<id>/undo`; the server keeps one Undo per station, so only the newest card
-  has the button. The station id is made once (`phone-xxxxxxxx`) and kept; the name defaults
+  has the button. Invalid addresses, rejected uploads and server errors keep the capture on disk
+  for retry after correcting the configuration; a pending result is also kept until settled.
+  The station id is made once (`phone-xxxxxxxx`) and kept; the name defaults
   to the phone's model.
 - **Standalone**: only a missing connection makes a capture wait (no route, no DNS, a timeout:
   `isOffline`). An answer that is an error - a wrong key, a used-up quota - sends it to the
   review queue with its photo.
+
+Printing search follows every online results page and includes all matching offline printings.
+When downloaded data gives a weaker match than exact set + number, the app checks online for a
+newer exact printing; if the network is unavailable it uses the downloaded match. Confidence tags
+and the set of matches eligible for automatic Add remain the same as the Python scanner.
 
 ## Install
 
@@ -149,6 +192,20 @@ first, which removes the app's data.
   `app/src/test/resources`, run in the server's checkout with its venv, e.g. from there:
   `venv/bin/python ../mtg-scanner-android/app/src/test/resources/export_reference.py ../mtg-scanner-android/app/src/test/resources/export_reference.json`
   (`parser_reference.py` prints its JSON instead).
+- `ScryfallSearchTest` and the address cases in `ServerOutcomeTest` also cover paginated printing
+  search and malformed server addresses, using intercepted HTTP rather than live services.
+- `ReliabilityTest` (instrumented) uses isolated temporary databases, synthetic photos and
+  intercepted HTTP. It covers manual Add beyond the scan-list limit and across restarts,
+  repeated Add/Undo, interrupted inventory/review commits, version-1 database upgrades,
+  bounded server polling, cancellation, outbox thumbnails and offline search/deletion. Run only
+  that class on an emulator after installing both APKs:
+  `adb shell am instrument -w -e class com.cardscanner.ReliabilityTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`.
+  It does not capture from the camera or call real AI, Scryfall or scanner servers.
+- `CredentialStorageTest` (instrumented) uses unique preferences and Android Keystore aliases
+  with synthetic credentials. It covers encryption, plaintext migration and migration failure,
+  tampering, key loss, credential removal, randomized IVs and final settings writes on cancellation.
+  Run it alongside the isolated reliability suite with
+  `adb shell am instrument -w -e class com.cardscanner.ReliabilityTest,com.cardscanner.CredentialStorageTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`.
 - `OfflineFindTest` (instrumented; card data downloaded + internet) - offline lookups against the
   API. 2026-09-26: every set + number / name + number read gave the same printing and tag; only
   name-only matches differ (Scryfall's default printing vs the newest), which go to review anyway.
@@ -181,19 +238,20 @@ Not done yet:
 - Standalone auto mode with outline detection has not been measured; nor a long offline pile
   on a real phone, nor a fixed-area capture in client mode (it sends a second picture).
 - The station token has not been tried from the app.
-- Prompt editor, API keys in the Android Keystore, per-ABI APKs.
+- Prompt editor, per-ABI APKs.
 
 ## How this project was built
 
 This app was developed entirely with AI. The code, the tests and this documentation were
-written by an AI coding assistant - Claude, by Anthropic, working through Claude Code - as the
-commit history records (every commit carries a `Co-Authored-By: Claude` line). The same goes
-for the [scanner server](https://github.com/SilentKernel81/scanner-server) it works with.
+written by AI coding assistants. Initial development used Claude, by Anthropic, through Claude
+Code; the reliability review and subsequent fixes used OpenAI Codex. The initial commit history
+records Claude's contributions. The [scanner server](https://github.com/SilentKernel81/scanner-server)
+was also developed with AI.
 
 The project's author decided what to build and how it should behave, and ran it on a real
 phone over a box of real cards; *What has been tried* is what came of those runs. It has been run,
-not audited: no one has reviewed the code independently, and the automated tests cover the
-parts that must match the server (the answer parser, the CSV format, the server's answers).
+not audited by a human: the code review and fixes were also performed by AI. Automated tests
+cover compatibility with the server and the persistence/concurrency paths listed above.
 
 ## License
 

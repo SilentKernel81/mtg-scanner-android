@@ -17,6 +17,7 @@ import java.util.zip.GZIPInputStream
  */
 class CardDatabase(context: Context, private val http: OkHttpClient) {
     private val file = File(context.filesDir, "cards.db")
+    private val updateLock = Any()
     @Volatile private var db: SQLiteDatabase? = open()
 
     private fun open(): SQLiteDatabase? = file.takeIf { it.exists() }?.let {
@@ -26,6 +27,7 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
     val ready get() = db != null
 
     /** (printings, when Scryfall made the file) of the downloaded data, or null */
+    @Synchronized
     fun info(): Pair<Int, String>? {
         val db = db ?: return null
         val count = db.rawQuery("SELECT COUNT(*) FROM cards", null).use { if (it.moveToFirst()) it.getInt(0) else 0 }
@@ -52,7 +54,9 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
      * Download Scryfall's default cards (gzipped JSON Lines, ~80 MB) into a new file, one card at a
      * time, then swap it in. `progress` gets status lines.
      */
-    fun download(progress: (String) -> Unit) {
+    fun download(progress: (String) -> Unit) = synchronized(updateLock) { downloadLocked(progress) }
+
+    private fun downloadLocked(progress: (String) -> Unit) {
         val (url, updatedAt) = bulkInfo()
         val temp = File(file.path + ".tmp")
         temp.delete()
@@ -106,10 +110,15 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
             out.close()
             synchronized(this) {
                 db?.close()
-                if (!temp.renameTo(file)) throw IOException("Could not replace the card data")
-                File(temp.path + "-journal").delete()
-                db = open()
-                sets = null
+                db = null
+                try {
+                    if (!temp.renameTo(file)) throw IOException("Could not replace the card data")
+                    File(temp.path + "-journal").delete()
+                } finally {
+                    // Reopen the old file as well if replacement failed.
+                    db = open()
+                    sets = null
+                }
             }
         } catch (e: Exception) {
             if (out.isOpen) { if (out.inTransaction()) out.endTransaction(); out.close() }
@@ -118,20 +127,29 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
         }
     }
 
-    fun delete() = synchronized(this) {
-        db?.close()
-        db = null
-        sets = null
-        file.delete()
+    fun delete() = synchronized(updateLock) {
+        synchronized(this) {
+            db?.close()
+            db = null
+            sets = null
+            file.delete()
+        }
     }
+
+    fun close() = synchronized(this) { db?.close(); db = null; sets = null }
+
+    /** Keep a multi-step lookup on one database generation while a download is swapped in. */
+    fun <T> read(block: (CardDatabase) -> T): T = synchronized(this) { block(this) }
 
     // ------------------------------------------------------------------------
     // Lookups (the local counterpart of Scryfall's API calls)
     // ------------------------------------------------------------------------
 
-    private fun query(where: String, args: Array<String>, order: String = "released DESC", limit: Int = 200): List<Printing> {
+    @Synchronized
+    private fun query(where: String, args: Array<String>, order: String = "released DESC", limit: Int? = null): List<Printing> {
         val db = db ?: return emptyList()
-        return db.rawQuery("SELECT * FROM cards WHERE $where ORDER BY $order LIMIT $limit", args).use { c ->
+        val limitSql = limit?.let { " LIMIT $it" }.orEmpty()
+        return db.rawQuery("SELECT * FROM cards WHERE $where ORDER BY $order$limitSql", args).use { c ->
             buildList { while (c.moveToNext()) add(c.printing()) }
         }
     }
@@ -139,6 +157,7 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
     fun byId(id: String): Printing? = query("id = ?", arrayOf(id)).firstOrNull()
 
     /** The printing with this set code and one of these collector numbers */
+    @Synchronized
     fun bySetNumber(setCode: String, numbers: List<String>): Printing? = numbers.firstNotNullOfOrNull { number ->
         query("set_code = ? AND number = ?", arrayOf(setCode.uppercase(), number)).firstOrNull()
     }
@@ -148,6 +167,7 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
      * a shortened legendary name ("Thanos" -> "Thanos, the Mad Titan"), or the closest spelling
      * (similarity >= 0.8 among names starting with the same letter). Null if nothing close.
      */
+    @Synchronized
     fun exactName(name: String): String? {
         val key = Scryfall.searchKey(name) ?: return null
         query("name_key = ? OR front_key = ? OR flavor_key = ?", arrayOf(key, key, key), limit = 1).firstOrNull()?.let { return it.name }
@@ -167,6 +187,7 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
     @Volatile private var sets: Pair<Set<String>, Map<String, String>>? = null
 
     /** Set code of a set code or set name, from the sets in the data; null if unknown */
+    @Synchronized
     fun resolveSet(value: String): String? {
         val db = db ?: return null
         val (codes, names) = sets ?: db.rawQuery("SELECT DISTINCT set_code, set_name FROM cards", null).use { c ->

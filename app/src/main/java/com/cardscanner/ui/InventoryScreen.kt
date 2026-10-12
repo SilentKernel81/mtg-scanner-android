@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -92,13 +91,8 @@ fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
     val pickCsv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importCsv) }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Column(Modifier.weight(1f)) {
-                Text("Inventory", style = MaterialTheme.typography.titleLarge)
-                Text("${entries.sumOf { it.quantity }} cards · ${entries.size} entries · $%.2f".format(entries.sumOf { it.priceUsd * it.quantity }),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        ScreenHeader("Inventory",
+            "${entries.sumOf { it.quantity }} cards · ${entries.size} entries · $%.2f".format(entries.sumOf { it.priceUsd * it.quantity }), onBack) {
             IconButton(onClick = { confirmClear = true }, enabled = entries.isNotEmpty()) { Icon(Icons.Default.DeleteSweep, "Clear inventory") }
         }
         FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -133,8 +127,9 @@ fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
                 placeholder = { Text("Filter by name") }, singleLine = true)
         }
         if (entries.isEmpty()) {
-            Text("No cards yet. Confirmed scans are added automatically; uncertain ones wait in the review queue. Or import a CSV (this app, the Python scanner or Moxfield).",
-                Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            EmptyFeed("Your collection starts here",
+                "Scan your first card or import a CSV. Confirmed scans go here; uncertain cards wait for review.",
+                Modifier.padding(12.dp))
         }
         // A new order or filter starts at the top (a keyed list otherwise keeps the item that was
         // on top in view, and the new first ones are hidden above it)
@@ -143,10 +138,10 @@ fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         // An entry that moves to the top (a new printing, an import) stays in view when the list
         // was at the top; the list then shows it one item down
         LaunchedEffect(shown.firstOrNull()?.id) { if (listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0) }
-        LazyColumn(Modifier.fillMaxSize(), state = listState) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(shown, key = { it.id }) { entry ->
-                EntryRow(entry) { editing = entry }
-                HorizontalDivider()
+                FeedCard { EntryRow(entry) { editing = entry } }
             }
         }
     }
@@ -174,9 +169,9 @@ fun InventoryScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
 
 @Composable
 private fun EntryRow(entry: InventoryEntry, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(entry.imageUrl, entry.name, Modifier.height(64.dp).width(46.dp).clip(RoundedCornerShape(3.dp)))
+        AsyncImage(entry.imageUrl, entry.name, Modifier.height(64.dp).width(46.dp).clip(RoundedCornerShape(8.dp)))
         Column(Modifier.weight(1f)) {
             Text(entry.name, fontWeight = FontWeight.SemiBold)
             Text("${entry.setName} (${entry.setCode}) #${entry.number}", style = MaterialTheme.typography.bodySmall)

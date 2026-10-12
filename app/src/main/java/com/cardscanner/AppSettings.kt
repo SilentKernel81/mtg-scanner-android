@@ -4,7 +4,7 @@ import android.content.Context
 import com.cardscanner.ai.Provider
 
 /**
- * User settings (SharedPreferences, private to the app), saved on every change. The first group
+ * Immutable settings snapshot. Credentials are encrypted by SettingsStorage before persistence. The first group
  * is for standalone scanning (the AI, the foil check, automatic adds), the capture thresholds and
  * the fixed area apply to both modes, and the last group is client mode.
  */
@@ -26,8 +26,10 @@ data class AppSettings(
     val fixedArea: List<Double>? = null,
     /** Add confirmed cards (set + number match) to the inventory without asking */
     val autoAdd: Boolean = true,
-    /** Sound effects: capture, added to the inventory, sent to the review queue */
-    val sounds: Boolean = true,
+    /** Independent sound cues, used in both standalone and server mode. */
+    val captureSound: Boolean = true,
+    val addedSound: Boolean = true,
+    val reviewSound: Boolean = true,
     /**
      * Client mode: captured cards are sent to a scanner server (the Python project's server/),
      * which reads them, finds the printing and keeps the collection. Off: standalone - this app
@@ -49,56 +51,12 @@ data class AppSettings(
     fun model(provider: Provider = this.provider) = models[provider]?.takeIf { it.isNotBlank() } ?: provider.models.first()
     fun apiKey(provider: Provider = this.provider) = apiKeys[provider].orEmpty()
 
+    // Compatibility entry points for tools/tests; live app state belongs to SettingsRepository.
     companion object {
-        private const val PREFS = "settings"
-
-        fun load(context: Context): AppSettings {
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val stationId = prefs.getString("station_id", null) ?: ("phone-" + java.util.UUID.randomUUID().toString().take(8))
-                .also { prefs.edit().putString("station_id", it).apply() }
-            return AppSettings(
-                serverMode = prefs.getBoolean("server_mode", false),
-                serverUrl = prefs.getString("server_url", "").orEmpty(),
-                stationName = prefs.getString("station_name", null) ?: android.os.Build.MODEL.orEmpty(),
-                stationToken = prefs.getString("station_token", "").orEmpty(),
-                stationId = stationId,
-                provider = Provider.of(prefs.getString("provider", null)),
-                models = Provider.entries.associateWith { prefs.getString("model_${it.id}", "").orEmpty() },
-                apiKeys = Provider.entries.associateWith { prefs.getString("key_${it.id}", "").orEmpty() },
-                localUrl = prefs.getString("local_url", "").orEmpty(),
-                detectFoil = prefs.getBoolean("detect_foil", true),
-                minSharpness = prefs.getInt("min_sharpness", 250),
-                stableFrames = prefs.getInt("stable_frames", 5),
-                rotation = prefs.getInt("rotation", 0),
-                fixedAreaEnabled = prefs.getBoolean("fixed_area_enabled", false),
-                autoAdd = prefs.getBoolean("auto_add", true),
-                sounds = prefs.getBoolean("sounds", true),
-                fixedArea = prefs.getString("fixed_area", null)?.split(",")?.mapNotNull { it.toDoubleOrNull() }?.takeIf { it.size == 4 },
-            )
-        }
+        fun load(context: Context): AppSettings = com.cardscanner.settings.SettingsStorage(context).load().settings
     }
 
-    fun save(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().apply {
-            putString("provider", provider.id)
-            Provider.entries.forEach {
-                putString("model_${it.id}", models[it].orEmpty())
-                putString("key_${it.id}", apiKeys[it].orEmpty())
-            }
-            putString("local_url", localUrl)
-            putBoolean("detect_foil", detectFoil)
-            putInt("min_sharpness", minSharpness)
-            putInt("stable_frames", stableFrames)
-            putInt("rotation", rotation)
-            putBoolean("fixed_area_enabled", fixedAreaEnabled)
-            putBoolean("auto_add", autoAdd)
-            putBoolean("sounds", sounds)
-            putString("fixed_area", fixedArea?.joinToString(","))
-            putBoolean("server_mode", serverMode)
-            putString("server_url", serverUrl)
-            putString("station_name", stationName)
-            putString("station_token", stationToken)
-            if (stationId.isNotEmpty()) putString("station_id", stationId)
-        }.apply()
-    }
+    fun save(context: Context) { com.cardscanner.settings.SettingsStorage(context).save(this) }
+
+    override fun toString(): String = "AppSettings(provider=$provider, serverMode=$serverMode, credentials=<redacted>)"
 }
