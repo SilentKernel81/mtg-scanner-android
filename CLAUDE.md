@@ -93,6 +93,9 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
 
 ## Where Things Live
 
+The server's Python files named below are in `../scanner-server/src/` (`scanner.py` is
+`src/scanner.py` there, `server/stations_api.py` is `src/server/stations_api.py`).
+
 | Area | Code |
 |---|---|
 | Card outline, warp (port of `object_detector.py`) | `detection/CardOutline.kt`: `findCardOutline`, `warpCard` |

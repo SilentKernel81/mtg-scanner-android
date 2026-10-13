@@ -1,6 +1,6 @@
 import json, sys, logging
 from difflib import SequenceMatcher
-sys.path.insert(0,'.')
+sys.path.insert(0,'src')  # the server's code is in src/ of its checkout (since 2026-10-12)
 from card_identifier import CardIdentifier
 ci = CardIdentifier.__new__(CardIdentifier); ci.log_callback=None
 cases = ["NAME: Lightning Bolt\nNUMBER: 0141\nSET: M11", "- **NAME**: Riolu (The card is blue)\n- **NUMBER**: 018B\n- **SET**: HOB EN",

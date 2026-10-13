@@ -74,7 +74,8 @@ arrives as the printing it is.
 The detection and capture rules, the AI prompts and answer parser, the printing match and the
 CSV format are ports of the server's Python code - keep both in step. The Python paths are in
 [scanner-server](https://github.com/SilentKernel81/scanner-server) (checked out beside this
-repository as `../scanner-server`):
+repository as `../scanner-server`), all in its `src/` folder - `scanner.py` below is
+`../scanner-server/src/scanner.py`:
 
 | Android | Python | Used in |
 |---|---|---|
