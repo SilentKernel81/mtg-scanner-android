@@ -93,8 +93,9 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
 
 ## Where Things Live
 
-The server's Python files named below are in `../scanner-server/src/` (`scanner.py` is
-`src/scanner.py` there, `server/stations_api.py` is `src/server/stations_api.py`).
+The server's Python files named below are in `../scanner-server/src/card_scanner/`:
+`scanner.py` and `object_detector.py` in `station/`, `prompts.py` and the other reading and
+collection modules in `core/`, `server/stations_api.py` as written.
 
 | Area | Code |
 |---|---|

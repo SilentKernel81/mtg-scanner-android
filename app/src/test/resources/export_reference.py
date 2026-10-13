@@ -1,11 +1,11 @@
-# Makes export_reference.json: the scanner server's collection CSV (games/base.py:
+# Makes export_reference.json: the scanner server's collection CSV (card_scanner/games/base.py:
 # write_collection_csv) for the rows in ExportParityTest. Run it in the scanner-server checkout
 # with its venv:
 #   venv/bin/python ../mtg-scanner-android/app/src/test/resources/export_reference.py \
 #       ../mtg-scanner-android/app/src/test/resources/export_reference.json
 import io, json, sys
 sys.path.insert(0, 'src')  # the server's code is in src/ of its checkout (since 2026-10-12)
-from games.base import write_collection_csv
+from card_scanner.games.base import write_collection_csv
 rows = [
     dict(card_id='0a7b2e5c-1111-4222-8333-444455556666', set_code='hoc',
          name='Thorin, King of Durin\'s Folk', set_name='The Hobbit Eternal', number='3', rarity='rare',

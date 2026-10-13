@@ -74,8 +74,10 @@ arrives as the printing it is.
 The detection and capture rules, the AI prompts and answer parser, the printing match and the
 CSV format are ports of the server's Python code - keep both in step. The Python paths are in
 [scanner-server](https://github.com/SilentKernel81/scanner-server) (checked out beside this
-repository as `../scanner-server`), all in its `src/` folder - `scanner.py` below is
-`../scanner-server/src/scanner.py`:
+repository as `../scanner-server`), all in its package `src/card_scanner/` - the camera's
+side in `station/` (`scanner.py`, `object_detector.py`), reading, card data and the
+collection in `core/` (`card_identifier.py`, `database.py`, `inventory.py`, ...), `server/` and
+`games/` as written below:
 
 | Android | Python | Used in |
 |---|---|---|
