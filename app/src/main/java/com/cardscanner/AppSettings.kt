@@ -36,6 +36,11 @@ data class AppSettings(
      * does all of that itself
      */
     val serverMode: Boolean = false,
+    /**
+     * Client mode: send each capture's whole camera frame and the outline found in it as well
+     * (training data for a better detector - FrameSidecar). Uploads get bigger: off by default
+     */
+    val sendFrames: Boolean = false,
     /** The server's address, e.g. http://192.168.1.20:5000 */
     val serverUrl: String = "",
     /** What this phone is called on the server (its station name) */

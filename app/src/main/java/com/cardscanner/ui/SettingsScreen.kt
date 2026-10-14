@@ -242,6 +242,14 @@ private fun ServerSection(viewModel: ScannerViewModel) {
         modifier = Modifier.fillMaxWidth(),
     )
     Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Send camera frames")
+            Text("Also send the whole camera picture and the outline found in it with each capture - training data for a better detector. Uploads are larger.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(settings.sendFrames, { viewModel.updateSettings(settings.copy(sendFrames = it)) })
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedButton(onClick = {
             status = "Connecting…"
             scope.launch { status = viewModel.testServer() }

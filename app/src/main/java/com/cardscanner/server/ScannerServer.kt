@@ -120,7 +120,8 @@ class ScannerServer(serverUrl: String, val stationId: String, private val statio
      * ★/• check (the same bitmap when the photo is that card; null without an outline).
      * Waits up to `waitSeconds` for the outcome, which is PENDING after that (ask with outcome()).
      */
-    fun sendCapture(card: Bitmap, foilCard: Bitmap?, captureId: String, waitSeconds: Int = 30): ServerOutcome {
+    fun sendCapture(card: Bitmap, foilCard: Bitmap?, captureId: String, waitSeconds: Int = 30,
+                    frame: com.cardscanner.CapturedFrame? = null): ServerOutcome {
         val request = request("/api/stations/$stationId/captures")
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("name", stationName)
@@ -129,6 +130,12 @@ class ScannerServer(serverUrl: String, val stationId: String, private val statio
             .addFormDataPart("image", "card.jpg", jpeg(card).toRequestBody(JPEG))
         if (foilCard === card) body.addFormDataPart("foil_is_image", "1")
         else if (foilCard != null) body.addFormDataPart("foil_image", "foil.jpg", jpeg(foilCard).toRequestBody(JPEG))
+        // Training data, not the capture (the server's core/frames.py): the camera frame and the
+        // outline found in it. A server that doesn't know the fields ignores them
+        if (frame != null) {
+            body.addFormDataPart("frame", "frame.jpg", frame.jpeg.toRequestBody(JPEG))
+            body.addFormDataPart("frame_meta", frame.meta.toString())
+        }
         return ServerOutcome.parse(send(request.post(body.build()).build()).second)
     }
 

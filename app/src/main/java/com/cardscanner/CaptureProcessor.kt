@@ -164,13 +164,13 @@ internal class CaptureProcessor(
     fun warmUp() { scope.launch(Dispatchers.IO) { identifier().warmUp() } }
 
     /** A capture: shown in the list, saved in the outbox and processed (see process) */
-    fun enqueue(card: Bitmap, foilCard: Bitmap?) {
+    fun enqueue(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null) {
         val id = showScan(card)
         try {
             // This runs on the capture executor. Save before launching any queued work,
             // so pending coroutines retain only a disk item, never full-resolution photos.
             synchronized(outbox) {
-                val item = outbox.add(card, foilCard)
+                val item = outbox.add(card, foilCard, frame)
                 refreshWaiting()
                 Log.i(TAG, "Capture #$id saved: ${card.width}x${card.height}")
                 process(id, item)
@@ -336,7 +336,7 @@ internal class CaptureProcessor(
             val server = server()
             ScannerServer.validatedUrl(server.baseUrl)
             item.bindServer(server.baseUrl, server.stationId)
-            var outcome = server.sendCapture(card, foilCard, item.captureId)
+            var outcome = server.sendCapture(card, foilCard, item.captureId, frame = item.frame())
             // Still being read after the wait (a long AI queue): ask until it is settled
             var asked = 0
             while (outcome.status == ServerOutcome.Status.PENDING && outcome.capture != null && asked++ < 90) {

@@ -15,8 +15,10 @@ import java.util.UUID
  * is taken up again when the app starts (the init block of ScannerViewModel that reads `all()`).
  *
  * files/outbox/<capture id>.jpg (the photo), <capture id>_foil.jpg (the flat card for the ★/•
- * check, when that is another picture) and <capture id>.json, written last: a capture without
- * it was cut off while being saved and is dropped.
+ * check, when that is another picture), <capture id>_frame.jpg (the whole camera frame, with
+ * Settings → Send camera frames - its note is in the json as `frame_meta`) and
+ * <capture id>.json, written last: a capture without it was cut off while being saved and is
+ * dropped.
  */
 class Outbox(context: Context) {
     private val dir = File(context.filesDir, "outbox").apply { mkdirs() }
@@ -31,6 +33,17 @@ class Outbox(context: Context) {
         internal val cardFile get() = File(dir, "$captureId.jpg")
         internal val foilFile get() = File(dir, "${captureId}_foil.jpg")
         internal val metaFile get() = File(dir, "$captureId.json")
+        internal val frameFile get() = File(dir, "${captureId}_frame.jpg")
+
+        /**
+         * The camera frame and its note, or null (none was kept, or it is gone). Training data
+         * only: a capture is sent without it when it can't be read.
+         */
+        fun frame(): CapturedFrame? = synchronized(this@Outbox) {
+            if (!frameFile.isFile || !metaFile.isFile) return null
+            val meta = runCatching { JSONObject(metaFile.readText()).optJSONObject("frame_meta") }.getOrNull() ?: return null
+            runCatching { CapturedFrame(frameFile.readBytes(), meta) }.getOrNull()
+        }
 
         val deleteRequested: Boolean
             get() = synchronized(this@Outbox) { metaFile.isFile && JSONObject(metaFile.readText()).optBoolean("delete_requested") }
@@ -82,17 +95,31 @@ class Outbox(context: Context) {
         }
     }
 
-    /** Save a capture (card: the photo; foilCard: the flat card for the ★/• check, or null) */
+    /** The last capture's id: a double capture shows in the camera-frame notes as a pair that follow each other */
+    private var previousCaptureId: String? = null
+
+    /**
+     * Save a capture (card: the photo; foilCard: the flat card for the ★/• check, or null;
+     * frame: the camera frame it was cut from, or null)
+     */
     @Synchronized
-    fun add(card: Bitmap, foilCard: Bitmap?): Item {
+    fun add(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null): Item {
         val item = Item(UUID.randomUUID().toString(), foilIsCard = foilCard === card, hasFoil = foilCard != null && foilCard !== card)
         try {
             save(card, item.cardFile)
             if (foilCard != null && foilCard !== card) save(foilCard, item.foilFile)
+            if (frame != null) {
+                item.frameFile.outputStream().use { it.write(frame.jpeg); it.fd.sync() }
+            }
             val meta = AtomicFile(item.metaFile)
             val stream = meta.startWrite()
             try {
-                stream.write(JSONObject().put("foil_is_card", item.foilIsCard).toString().toByteArray(Charsets.UTF_8))
+                val note = JSONObject().put("foil_is_card", item.foilIsCard)
+                if (frame != null) {
+                    note.put("frame_meta", frame.meta.put("capture_id", item.captureId)
+                        .put("previous_capture_id", previousCaptureId ?: JSONObject.NULL))
+                }
+                stream.write(note.toString().toByteArray(Charsets.UTF_8))
                 meta.finishWrite(stream)
             } catch (e: Exception) {
                 meta.failWrite(stream)
@@ -102,6 +129,7 @@ class Outbox(context: Context) {
             remove(item)
             throw e
         }
+        previousCaptureId = item.captureId
         return item
     }
 
@@ -110,6 +138,7 @@ class Outbox(context: Context) {
         item.metaFile.delete()
         item.cardFile.delete()
         item.foilFile.delete()
+        item.frameFile.delete()
     }
 
     /** The waiting captures, oldest first; leftovers of a capture cut off while saving are deleted */
@@ -122,7 +151,7 @@ class Outbox(context: Context) {
             Item(id, foilIsCard, hasFoil = File(dir, "${id}_foil.jpg").isFile).takeIf { it.cardFile.isFile }
                 ?: run { meta.delete(); null }
         }
-        val kept = items.flatMap { listOf(it.cardFile, it.foilFile, it.metaFile) }.toSet()
+        val kept = items.flatMap { listOf(it.cardFile, it.foilFile, it.metaFile, it.frameFile) }.toSet()
         files.filter { it !in kept }.forEach { it.delete() }
         return items
     }

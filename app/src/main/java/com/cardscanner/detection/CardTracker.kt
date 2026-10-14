@@ -77,6 +77,13 @@ class CardTracker(
         private set
 
     /**
+     * Why the card now on the pile counted as new - kept for the camera-frame note sent with a
+     * capture (FrameSidecar). Written on the analysis thread, read on the capture's.
+     */
+    @Volatile var lastNewCard: com.cardscanner.NewCard? = null
+        private set
+
+    /**
      * One analysis frame (RGBA, upright). Returns the detection state, and whether an
      * auto-capture should start now (`autoCapture` on and the card still and new).
      */
@@ -100,6 +107,8 @@ class CardTracker(
                 // the new card that happen to lie where the old one's were
                 trackedOutline = null
                 message = "New card (jump %.1f%%, image change %.2f)".format(lastFrameChange.first * 100, lastFrameChange.second)
+                lastNewCard = com.cardscanner.NewCard("jump_or_image_change", jump = lastFrameChange.first,
+                    imageChange = lastFrameChange.second)
             }
 
             val now = System.currentTimeMillis()
@@ -121,6 +130,7 @@ class CardTracker(
             if (awaitingNewCard && missingFrames >= missingFramesForNewCard) {
                 awaitingNewCard = false
                 message = "Card gone - ready for the next card"
+                lastNewCard = com.cardscanner.NewCard("card_gone")
             }
         }
 
@@ -193,6 +203,7 @@ class CardTracker(
                 awaitingNewCard = false
                 stableFrames = 0
                 message = "New card (area change %.1f)".format(change)
+                lastNewCard = com.cardscanner.NewCard("area_change", areaChange = change)
             }
         }
 

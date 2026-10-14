@@ -88,6 +88,7 @@ collection in `core/` (`card_identifier.py`, `database.py`, `inventory.py`, ...)
 | `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds) - no focus sweep: the phone's continuous autofocus | both modes |
 | `Outbox.kt`, `CaptureProcessor.kt` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
 | `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
+| `FrameSidecar.kt` (+ `ScannerViewModel.kt`: `cutOutCard`, `frameOf`; `Outbox.kt`) | `station/station_client.py`: `queue_upload`; `station/scanner.py`: `_frame_snapshot`; `core/frames.py`; `server/stations_api.py`: `keep_camera_frame` - the camera frame and the outline behind a capture, sent as training data (Settings → Send camera frames; **written 2026-10-14, not yet tried on a phone**) | client mode |
 | `ai/CardIdentifier.kt`, `ai/Prompts.kt` | `card_identifier.py`, `prompts.py` (`BUILT_IN['mtg']`) | standalone |
 | `scryfall/Scryfall.kt` | `database.py:search_card_exact` (same steps and `match` tags; offline data first, then the Scryfall API) | standalone |
 | `scryfall/CardDatabase.kt` | `database.py` card table: Scryfall's default cards downloaded in Settings (~80 MB, ~1.5 min), trimmed; fuzzy names like `names_match` | standalone |

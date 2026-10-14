@@ -157,7 +157,8 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     fun shareHandled() = collection.shareHandled()
     suspend fun testServer() = processor.testServer()
     fun undoOnServer() = processor.undoOnServer()
-    internal fun identify(card: Bitmap, foilCard: Bitmap?) = processor.enqueue(card, foilCard)
+    internal fun identify(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null) =
+        processor.enqueue(card, foilCard, frame)
 
     // ------------------------------------------------------------------------
     // Camera frames
@@ -216,7 +217,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
                     image.close()
                     capturing.set(false)
                 }
-                if (card == null) _message.value = "Capture failed" else identify(card.first, card.second)
+                if (card == null) _message.value = "Capture failed" else identify(card.photo, card.flat, card.frame)
             }
 
             override fun onError(exception: ImageCaptureException) {
@@ -231,7 +232,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
      * The photo (the flat card; in fixed-area mode the area as drawn) and the flat card for the
      * ★/• check (null in fixed-area mode without an outline inside the area)
      */
-    private fun cutOutCard(image: ImageProxy, state: CardTracker.State): Pair<Bitmap, Bitmap?> {
+    private fun cutOutCard(image: ImageProxy, state: CardTracker.State): CutOut {
         var bitmap = image.toBitmap()
         val rotation = (image.imageInfo.rotationDegrees + settings.value.rotation) % 360
         if (rotation != 0) {
@@ -243,9 +244,13 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
         // still is searched again for the exact edges (the card may have shifted a pixel or two)
         val scaleX = full.cols().toDouble() / state.frameWidth
         val scaleY = full.rows().toDouble() / state.frameHeight
-        val flat = state.corners?.let { corners ->
+        // The outline the flat card is cut by, in the still's pixels (also what the camera-frame note records)
+        val outline = state.corners?.let { corners ->
             val guess = corners.scaled(scaleX, scaleY)
-            val warped = warpCard(full, findCardOutline(full, previous = guess)?.corners ?: guess)
+            findCardOutline(full, previous = guess)?.corners ?: guess
+        }
+        val flat = outline?.let { corners ->
+            val warped = warpCard(full, corners)
             warped.toBitmap().also { warped.release() }
         }
         val photo = state.area?.let { (x1, y1, x2, y2) ->
@@ -259,7 +264,44 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
             region.toBitmap()
         } ?: flat ?: throw IllegalStateException("No card outline")
         full.release()
-        return photo to flat
+        // Client mode with "Send camera frames" on: the whole still and the outline go with the photo
+        val frame = if (settings.value.serverMode && settings.value.sendFrames) frameOf(bitmap, outline, photo, state) else null
+        return CutOut(photo, flat, frame)
+    }
+
+    /** What a capture is made of: the photo, the flat card for the foil check (or null), the camera-frame sidecar (or null) */
+    private class CutOut(val photo: Bitmap, val flat: Bitmap?, val frame: CapturedFrame?)
+
+    private var previousCaptureAt = 0L
+
+    /**
+     * The still as a JPEG (at most FrameSidecar.MAX_SIDE) with the outline in its pixels and a
+     * note of how the capture came about. Never fails the capture: without it the card still goes.
+     */
+    private fun frameOf(still: Bitmap, outline: List<com.cardscanner.detection.Pt>?, photo: Bitmap,
+                        state: CardTracker.State): CapturedFrame? = try {
+        val factor = FrameSidecar.scale(still.width, still.height)
+        val stored = if (factor == 1.0) still
+            else Bitmap.createScaledBitmap(still, (still.width * factor).toInt(), (still.height * factor).toInt(), true)
+        val bytes = java.io.ByteArrayOutputStream().also {
+            stored.compress(Bitmap.CompressFormat.JPEG, FrameSidecar.JPEG_QUALITY, it)
+        }.toByteArray()
+        val now = System.currentTimeMillis()
+        val meta = FrameSidecar.meta(
+            frameWidth = stored.width, frameHeight = stored.height,
+            corners = FrameSidecar.cornersJson(outline, factor),
+            cardWidth = photo.width, cardHeight = photo.height, rotation = settings.value.rotation,
+            fixedArea = state.area != null, stableFrames = state.stableFrames, requiredStableFrames = state.requiredFrames,
+            newCard = tracker.lastNewCard,
+            secondsSincePreviousCapture = if (previousCaptureAt == 0L) null else (now - previousCaptureAt) / 1000.0,
+            now = now,
+        )
+        previousCaptureAt = now
+        if (stored !== still) stored.recycle()
+        CapturedFrame(bytes, meta)
+    } catch (e: Exception) {
+        Log.w(TAG, "Could not keep the camera frame: ${e.message}")
+        null
     }
 
     override fun onCleared() {

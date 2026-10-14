@@ -76,6 +76,7 @@ internal class SettingsStorage(
             stationId = stationId,
             stationName = prefs.getString("station_name", null) ?: android.os.Build.MODEL.orEmpty(),
             serverMode = prefs.getBoolean("server_mode", false),
+            sendFrames = prefs.getBoolean("send_frames", false),
             serverUrl = prefs.getString("server_url", "").orEmpty(),
             localUrl = prefs.getString("local_url", "").orEmpty(),
             detectFoil = prefs.getBoolean("detect_foil", true),
@@ -128,6 +129,7 @@ internal class SettingsStorage(
                 .putBoolean("sound_review", settings.reviewSound)
                 .remove("sounds")
                 .putBoolean("server_mode", settings.serverMode)
+                .putBoolean("send_frames", settings.sendFrames)
                 .putString("server_url", settings.serverUrl)
                 .putString("station_name", settings.stationName)
             if (settings.stationId.isNotEmpty()) editor.putString("station_id", settings.stationId)
