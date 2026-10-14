@@ -53,7 +53,10 @@ offline card data (~80 MB, so lookups work without internet), the foil check and
 thresholds.
 
 **Client mode.** Settings → *Send cards to a scanner server*, the server's address
-(`http://<server>:5000`), and **Test connection**. Each capture is uploaded; the list shows
+(`http://<server>:5000`), and **Test connection**. The server only answers under names it
+knows: an IP address, its own machine name (alone or with `.local`, `.lan`, `.home`, ...), or a
+name in its `flask.allowed_hosts` (a reverse proxy, a Docker service name) - another name is
+refused with a 403 that says so. Each capture is uploaded; the list shows
 the server's answer - *Added on the server* (with capture-specific Remove) or *In the server's
 review queue*. *Cards and review on the server* opens the phone's page there. The phone's own
 inventory, review queue, AI settings and card data are not used and not touched while client
@@ -89,7 +92,7 @@ collection in `core/` (`card_identifier.py`, `database.py`, `inventory.py`, ...)
 | `scryfall/Scryfall.kt` | `database.py:search_card_exact` (same steps and `match` tags; offline data first, then the Scryfall API) | standalone |
 | `scryfall/CardDatabase.kt` | `database.py` card table: Scryfall's default cards downloaded in Settings (~80 MB, ~1.5 min), trimmed; fuzzy names like `names_match` | standalone |
 | `inventory/ReviewQueue.kt`, `ui/ReviewScreen.kt` | `review.py` + the web review | standalone |
-| `inventory/Inventory.kt` | `inventory.py` (same table and merge key; confirmed cards added automatically like `auto_add`) | standalone |
+| `inventory/Inventory.kt` | `inventory.py` (same table and merge key; confirmed cards added automatically like `auto_add`; not ported: `inventory_batches` - which copies came in together, "Remove this batch" - the stations, trades and decks) | standalone |
 | `inventory/Export.kt` | `games/base.py:write_collection_csv` - byte-identical (`ExportParityTest`); `games/mtg.py:write_moxfield` | standalone |
 | `inventory/Import.kt` | `inventory.py:import_csv`, `Magic.import_rows` - the same files, looked up on Scryfall by set + number, then name | standalone |
 
@@ -267,7 +270,28 @@ Not done yet:
 - Standalone auto mode with outline detection has not been measured; nor a long offline pile
   on a real phone, nor a fixed-area capture in client mode (it sends a second picture).
 - The station token has not been tried from the app.
+- The server's Host check (2026-10-14) has not been tried from the phone with a name the server
+  refuses: the server's 403 now carries its reason as `message` (the field `ServerRefused`
+  shows), but only a server from `27b0c55` on does; an older one shows "HTTP 403".
 - Prompt editor, per-ABI APKs.
+
+### After the server's changes of 2026-10-14
+
+The server moved to one code base with the standalone program, and gained batches, Host and
+Origin checks, one transaction per edit and a restore that holds the locks. Checked from this
+side, against scanner-server `27b0c55`, with no phone and no Gradle:
+
+- The five addresses `ScannerServer.kt` calls (`GET /api/stations`, `POST .../captures`,
+  `GET .../captures/<n>`, `GET` and `DELETE .../captures/<n>/sync`, `POST .../undo`) are in the
+  server's recorded route list with the same methods.
+- `export_reference.py` and `parser_reference.py`, run in the server's checkout, give files
+  byte-identical to the committed `export_reference.json` and `parser_reference.json`: the
+  collection CSV and the answer parser have not drifted.
+- Every Python file named in the table above is where it says (`src/card_scanner/...`).
+- The server's 334 tests pass.
+
+Not run: the Android JVM tests, the reliability tests, the emulator-to-server contract test,
+and a phone against the new Host check.
 
 ## How this project was built
 
