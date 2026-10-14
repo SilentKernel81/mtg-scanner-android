@@ -29,16 +29,22 @@ fun writeCsv(entries: List<InventoryEntry>): String = csv(
     })
 
 /**
- * Moxfield collection import. Edition is the set code: Moxfield matches it against its sets and,
- * for a value it doesn't know (e.g. the set name), takes the alphabetically first set of the card.
+ * Moxfield collection import, in the columns of Moxfield's own export (Count, Tradelist Count,
+ * Name, Edition, Condition, Language, Foil, Tags, Last Modified, Collector Number, Alter, Proxy,
+ * Purchase Price): Archidekt's "Moxfield" preset reads those 13 by position, so a shorter or
+ * reordered file fails there. Same file as the server's write_moxfield (games/mtg.py).
+ * Edition is the set code: Moxfield matches it against its sets and, for a value it doesn't
+ * know (e.g. the set name), takes the alphabetically first set of the card.
  */
 fun writeMoxfield(entries: List<InventoryEntry>): String = csv(
-    listOf("Count", "Name", "Edition", "Condition", "Language", "Foil", "Collector Number", "Purchase Price", "Tag"),
+    listOf("Count", "Tradelist Count", "Name", "Edition", "Condition", "Language", "Foil", "Tags", "Last Modified",
+        "Collector Number", "Alter", "Proxy", "Purchase Price"),
     entries.map {
         // A surge foil is Scryfall's "foil" finish of a surge foil printing (Moxfield's finishes:
         // foil, etched); the printing itself is given by set + collector number
         val foil = if (it.finish == Finish.REGULAR) "" else "foil"
-        listOf(it.quantity.toString(), it.name, it.setCode.lowercase(), it.condition, "English", foil, it.number, "0", "")
+        listOf(it.quantity.toString(), "0", it.name, it.setCode.lowercase(), it.condition, "English", foil, "", "",
+            it.number, "False", "False", "0")
     })
 
 /** RFC 4180 CSV like Python's csv module: fields with commas, quotes or line breaks are quoted */

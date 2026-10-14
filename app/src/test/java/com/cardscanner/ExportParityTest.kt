@@ -35,9 +35,9 @@ class ExportParityTest {
     @Test
     fun moxfieldUsesSetCodes() {
         val lines = writeMoxfield(entries).trimEnd().lines()
-        assertEquals("Count,Name,Edition,Condition,Language,Foil,Collector Number,Purchase Price,Tag", lines[0].trim())
-        assertEquals("1,\"Thorin, King of Durin's Folk\",hoc,Near Mint,English,,3,0,", lines[1].trim())
-        assertEquals("3,\"The \"\"Quoted\"\" Card\",tst,Lightly Played,English,foil,12a,0,", lines[2].trim())
-        assertEquals("2,Smaug,hob,Near Mint,English,foil,109,0,", lines[3].trim())
+        assertEquals("Count,Tradelist Count,Name,Edition,Condition,Language,Foil,Tags,Last Modified,Collector Number,Alter,Proxy,Purchase Price", lines[0].trim())
+        assertEquals("1,0,\"Thorin, King of Durin's Folk\",hoc,Near Mint,English,,,,3,False,False,0", lines[1].trim())
+        assertEquals("3,0,\"The \"\"Quoted\"\" Card\",tst,Lightly Played,English,foil,,,12a,False,False,0", lines[2].trim())
+        assertEquals("2,0,Smaug,hob,Near Mint,English,foil,,,109,False,False,0", lines[3].trim())
     }
 }
