@@ -283,11 +283,11 @@ class CardTracker(
         val anchor = settleAnchor!!
         val drift = (0 until 4).maxOf { (points[it] - anchor[it]).norm() } / cardSize
         val sharpnessChange = abs(sharpness - prevSharpness) / max(prevSharpness, 1e-6)
-        val imageChange = thumbnailDifference(thumbnail, prevThumbnail)
+        val imageChange = thumbnailDifference(thumbnail, prevThumbnail, smooth = true)
 
         // A drop (or a hand) makes the card jump or change far beyond camera noise
         // (measured on a card lying still: movement <= 0.4%, image change <= 0.07)
-        cardDisturbed = movement > 0.03 || imageChange > 0.3
+        cardDisturbed = movement > 0.03 || imageChange > IMAGE_CHANGE_LIMIT
         lastFrameChange = movement to imageChange
         metrics = Metrics(movement, drift, sharpnessChange, sharpness)
         val settled = movement < 0.01 && drift < 0.01 && sharpnessChange < 0.2 && cardInFocus
@@ -303,7 +303,7 @@ class CardTracker(
     private fun newCardArrived(gap: Int): Boolean {
         newCardGapOnly = false
         if (cardDisturbed) return true
-        if (thumbnailDifference(previousThumbnail, capturedThumbnail) > 0.3) return true
+        if (thumbnailDifference(previousThumbnail, capturedThumbnail, smooth = true) > IMAGE_CHANGE_LIMIT) return true
         if (gap >= 1 && lastFrameChange.first > 0.008) {
             // Only this weak sign: the outline flickered and came back a little shifted
             newCardGapOnly = true
@@ -376,12 +376,68 @@ class CardTracker(
             return FloatArray(values.size) { ((values[it] - mean) / (std + 1e-6)).toFloat() }
         }
 
-        /** Mean difference between two card thumbnails (0 = identical) */
-        private fun thumbnailDifference(a: FloatArray?, b: FloatArray?): Double {
+        /**
+         * What counts as "the picture of the card changed" (smoothed thumbnails). Python:
+         * CardScanner.IMAGE_CHANGE_LIMIT. Measured there 2026-10-15 on one card captured twice in
+         * a row against different cards: the same card differed up to 0.22 smoothed (0.45 not),
+         * different cards 0.51 and more.
+         */
+        const val IMAGE_CHANGE_LIMIT = 0.35
+
+        /**
+         * Mean difference between two card thumbnails (0 = identical). `smooth`: blurred first
+         * (sigma 1.5) and normalised again - the corner network's outline of a still card wobbles
+         * by 1-1.5% of its size, which shifts a detailed card's thumbnail by a fraction of a pixel
+         * and made it "change" by 0.3-0.5 every frame (a card captured again and again). Python:
+         * CardScanner._thumbnail_difference(smooth=True).
+         */
+        internal fun thumbnailDifference(a: FloatArray?, b: FloatArray?, smooth: Boolean = false): Double {
             if (a == null || b == null || a.size != b.size) return 0.0
+            val x = if (smooth) smoothedThumbnail(a) else a
+            val y = if (smooth) smoothedThumbnail(b) else b
             var sum = 0.0
-            for (i in a.indices) sum += abs(a[i] - b[i])
-            return sum / a.size
+            for (i in x.indices) sum += abs(x[i] - y[i])
+            return sum / x.size
+        }
+
+        private const val THUMB_W = 32
+        private const val THUMB_H = 45
+        private const val BLUR_SIGMA = 1.5
+        private const val BLUR_RADIUS = 6      // OpenCV's kernel for sigma 1.5 on float data: 13 taps
+
+        /** The Gaussian taps OpenCV's GaussianBlur(ksize 0, sigma 1.5) uses on a float image: 13, summing to 1 */
+        private val blurKernel: DoubleArray by lazy {
+            val taps = DoubleArray(2 * BLUR_RADIUS + 1) { kotlin.math.exp(-((it - BLUR_RADIUS) * (it - BLUR_RADIUS)) / (2 * BLUR_SIGMA * BLUR_SIGMA)) }
+            val total = taps.sum()
+            DoubleArray(taps.size) { taps[it] / total }
+        }
+
+        /** Index with OpenCV's default border (reflect 101: ... 2 1 | 0 1 2 ... n-2 n-1 | n-2 ...) */
+        private fun reflect(index: Int, size: Int): Int {
+            var i = index
+            if (size == 1) return 0
+            while (i < 0 || i >= size) i = if (i < 0) -i else 2 * (size - 1) - i
+            return i
+        }
+
+        /** The thumbnail (45 rows of 32) blurred and normalised again (mean 0, std 1) */
+        internal fun smoothedThumbnail(values: FloatArray): FloatArray {
+            val kernel = blurKernel
+            val horizontal = FloatArray(values.size)
+            for (row in 0 until THUMB_H) for (col in 0 until THUMB_W) {
+                var sum = 0.0
+                for (k in -BLUR_RADIUS..BLUR_RADIUS) sum += kernel[k + BLUR_RADIUS] * values[row * THUMB_W + reflect(col + k, THUMB_W)]
+                horizontal[row * THUMB_W + col] = sum.toFloat()
+            }
+            val blurred = FloatArray(values.size)
+            for (row in 0 until THUMB_H) for (col in 0 until THUMB_W) {
+                var sum = 0.0
+                for (k in -BLUR_RADIUS..BLUR_RADIUS) sum += kernel[k + BLUR_RADIUS] * horizontal[reflect(row + k, THUMB_H) * THUMB_W + col]
+                blurred[row * THUMB_W + col] = sum.toFloat()
+            }
+            val mean = blurred.average()
+            val std = kotlin.math.sqrt(blurred.sumOf { (it - mean) * (it - mean) } / blurred.size)
+            return FloatArray(blurred.size) { ((blurred[it] - mean) / (std + 1e-6)).toFloat() }
         }
     }
 }
