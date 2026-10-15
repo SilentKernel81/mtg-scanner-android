@@ -279,15 +279,18 @@ private fun statusColor(status: CardTracker.Status?) = when (status) {
 
 @Composable
 private fun OutlineOverlay(state: CardTracker.State?, wash: Float = 0f) {
-    // wash: 1 at a capture, fading to 0 - the whole card (or the fixed area) tinted green, see-through
-    val washColor = Color(0xFF00E676).copy(alpha = 0.45f * wash)
+    // wash: 1 at a capture, fading to 0. A card found by itself has no border: it is tinted in its
+    // state's colour, and washed a stronger green at a capture (CaptureWash). The fixed area
+    // keeps its rectangle - the area that was drawn - and gets the wash only
+    val green = Color(0xFF00E676)
     Canvas(Modifier.fillMaxSize()) {
         if (state == null) return@Canvas
         val sx = size.width / state.frameWidth
         val sy = size.height / state.frameHeight
         // Fixed area: the area is the photo; the outline (only for the foil check) isn't drawn
         state.area?.let { (x1, y1, x2, y2) ->
-            if (wash > 0f) drawRect(washColor, Offset(x1 * sx, y1 * sy), Size((x2 - x1) * sx, (y2 - y1) * sy))
+            val areaWash = CaptureWash.area(wash)
+            if (areaWash > 0f) drawRect(green.copy(alpha = areaWash), Offset(x1 * sx, y1 * sy), Size((x2 - x1) * sx, (y2 - y1) * sy))
             drawRect(statusColor(state.status), Offset(x1 * sx, y1 * sy), Size((x2 - x1) * sx, (y2 - y1) * sy),
                 style = Stroke(width = 3.dp.toPx()))
             return@Canvas
@@ -298,9 +301,8 @@ private fun OutlineOverlay(state: CardTracker.State?, wash: Float = 0f) {
             corners.drop(1).forEach { lineTo(it.x.toFloat() * sx, it.y.toFloat() * sy) }
             close()
         }
-        if (wash > 0f) drawPath(path, washColor)   // filled: the whole card, not only its outline
-        drawPath(path, statusColor(state.status), style = Stroke(width = 3.dp.toPx()))
-        drawCircle(statusColor(state.status), 4.dp.toPx(), Offset(corners[0].x.toFloat() * sx, corners[0].y.toFloat() * sy))
+        val (alpha, flashing) = CaptureWash.autoCard(wash)
+        drawPath(path, (if (flashing) green else statusColor(state.status)).copy(alpha = alpha))   // no border
     }
 }
 
