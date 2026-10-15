@@ -57,6 +57,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -90,6 +92,15 @@ import android.widget.Toast
 @Composable
 fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInventory: () -> Unit, onReview: () -> Unit) {
     val detection by viewModel.detection.collectAsStateWithLifecycle()
+    val captures by viewModel.captureFlashes.collectAsStateWithLifecycle()
+    // 1 at a capture, fading to 0: the card is washed green by it (OutlineOverlay)
+    val wash = remember { Animatable(0f) }
+    LaunchedEffect(captures) {
+        if (captures > 0) {
+            wash.snapTo(1f)
+            wash.animateTo(0f, tween(durationMillis = 600))
+        }
+    }
     val latestScan by viewModel.latestScan.collectAsStateWithLifecycle()
     val auto by viewModel.autoCapture.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
@@ -132,7 +143,7 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
                     onCancel = { drawingArea = false },
                 )
             } else {
-                OutlineOverlay(detection)
+                OutlineOverlay(detection, wash.value)
                 StatusChip(detection, auto, Modifier.align(Alignment.TopStart).padding(8.dp))
             }
         }
@@ -267,13 +278,16 @@ private fun statusColor(status: CardTracker.Status?) = when (status) {
 }
 
 @Composable
-private fun OutlineOverlay(state: CardTracker.State?) {
+private fun OutlineOverlay(state: CardTracker.State?, wash: Float = 0f) {
+    // wash: 1 at a capture, fading to 0 - the whole card (or the fixed area) tinted green, see-through
+    val washColor = Color(0xFF00E676).copy(alpha = 0.45f * wash)
     Canvas(Modifier.fillMaxSize()) {
         if (state == null) return@Canvas
         val sx = size.width / state.frameWidth
         val sy = size.height / state.frameHeight
         // Fixed area: the area is the photo; the outline (only for the foil check) isn't drawn
         state.area?.let { (x1, y1, x2, y2) ->
+            if (wash > 0f) drawRect(washColor, Offset(x1 * sx, y1 * sy), Size((x2 - x1) * sx, (y2 - y1) * sy))
             drawRect(statusColor(state.status), Offset(x1 * sx, y1 * sy), Size((x2 - x1) * sx, (y2 - y1) * sy),
                 style = Stroke(width = 3.dp.toPx()))
             return@Canvas
@@ -284,6 +298,7 @@ private fun OutlineOverlay(state: CardTracker.State?) {
             corners.drop(1).forEach { lineTo(it.x.toFloat() * sx, it.y.toFloat() * sy) }
             close()
         }
+        if (wash > 0f) drawPath(path, washColor)   // filled: the whole card, not only its outline
         drawPath(path, statusColor(state.status), style = Stroke(width = 3.dp.toPx()))
         drawCircle(statusColor(state.status), 4.dp.toPx(), Offset(corners[0].x.toFloat() * sx, corners[0].y.toFloat() * sy))
     }

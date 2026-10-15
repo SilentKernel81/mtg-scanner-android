@@ -50,6 +50,10 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     val latestScan = history.latestScan.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
+
+    /** Counts the captures taken from this screen: the overlay washes the card green at each one */
+    private val _captureFlashes = MutableStateFlow(0)
+    val captureFlashes = _captureFlashes.asStateFlow()
     private val _autoCapture = MutableStateFlow(false)
     val autoCapture = _autoCapture.asStateFlow()
     private val _detection = MutableStateFlow<CardTracker.State?>(null)
@@ -207,6 +211,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     private fun capture(state: CardTracker.State) {
         val capture = imageCapture ?: return
         if (!capturing.compareAndSet(false, true)) return
+        _captureFlashes.value += 1
         if (settings.value.captureSound) Sounds.capture()
         capture.takePicture(captureExecutor, object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
