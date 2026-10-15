@@ -171,6 +171,14 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
             Switch(settings.autoAdd, { viewModel.updateSettings(settings.copy(autoAdd = it)) })
         }
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Find cards with the corner network")
+                Text("Asked before the outline detector: finds cards the outline detector loses on a tall pile of sleeved cards. Turn this off to use the outline detector alone.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(settings.cornerNet, { viewModel.updateSettings(settings.copy(cornerNet = it)) })
+        }
         NumberField("Minimum sharpness", settings.minSharpness,
             "Cards below it are not auto-captured. Lower it if cards never become Ready.") {
             viewModel.updateSettings(settings.copy(minSharpness = it))

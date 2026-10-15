@@ -18,6 +18,11 @@ data class AppSettings(
     val minSharpness: Int = 250,
     /** Consecutive still, in-focus frames before an auto-capture */
     val stableFrames: Int = 5,
+    /**
+     * Ask our corner network for the card before the outline detector (see CardFinder): it finds
+     * cards on a tall pile of sleeved cards that the outline detector loses. Off: outline only
+     */
+    val cornerNet: Boolean = true,
     /** Extra clockwise rotation of the camera image (0/90/180/270): cards must look upright */
     val rotation: Int = 0,
     /** Fixed area (sleeved / borderless cards): cards judged by the image inside it */

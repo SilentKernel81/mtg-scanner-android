@@ -99,7 +99,7 @@ collection modules in `core/`, `server/stations_api.py` as written.
 
 | Area | Code |
 |---|---|
-| Card outline, warp (port of `object_detector.py`) | `detection/CardOutline.kt`: `findCardOutline`, `warpCard` |
+| Card outline, warp (port of `object_detector.py`) | `detection/CardOutline.kt`: `findCardOutline`, `warpCard`; the corner network asked first: `detection/CardFinder.kt` (`find`: network, then the outline detector), `CornerNet.kt` (OpenCV dnn, `assets/corner_net.onnx` - the server repository's `station/corner_net.onnx`), `CornerMath.kt` (the arithmetic, JVM-tested); `androidTest/CornerNetParityTest.kt` against the Python code's corners |
 | Stillness, auto-capture, new card, fixed area (port of `scanner.py`) | `detection/CardTracker.kt`: `process`, `processArea`, `isCardSettled`, `newCardArrived` |
 | Camera frames, taking a capture | `ScannerViewModel.kt`: `analyze`, `manualCapture`, `capture`, `cutOutCard`; `ui/ScannerScreen.kt`: `CameraPreview` |
 | A capture's way: saved, processed in the current mode, retried without a network, resumed after a restart | `Outbox.kt`; `CaptureProcessor.kt`: `enqueue`, `process` (the retry loop), `isOffline`, `resume`; display list in `ScanHistory.kt` |

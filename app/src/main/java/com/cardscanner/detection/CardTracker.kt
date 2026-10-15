@@ -89,7 +89,7 @@ class CardTracker(
      */
     fun process(frame: Mat, autoCapture: Boolean, busy: Boolean): Pair<State, Boolean> {
         area?.let { return processArea(frame, it, autoCapture, busy) }
-        val outline = findCardOutline(frame, previous = if (missingFrames <= 2) trackedOutline else null)
+        val outline = CardFinder.find(frame, previous = if (missingFrames <= 2) trackedOutline else null)
         var message: String? = null
         var trigger = false
 
@@ -208,7 +208,7 @@ class CardTracker(
         }
 
         // Outline inside the area -> the flat card whose ★/• corner is read
-        var corners = findCardOutline(frame, previous = if (missingFrames <= 2) trackedOutline else null)?.corners
+        var corners = CardFinder.find(frame, previous = if (missingFrames <= 2) trackedOutline else null)?.corners
         if (corners != null) {
             trackedOutline = corners
             missingFrames = 0

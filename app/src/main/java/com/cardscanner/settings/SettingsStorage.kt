@@ -83,6 +83,7 @@ internal class SettingsStorage(
             minSharpness = prefs.getInt("min_sharpness", 250),
             stableFrames = prefs.getInt("stable_frames", 5),
             rotation = prefs.getInt("rotation", 0),
+            cornerNet = prefs.getBoolean("corner_net", true),
             fixedAreaEnabled = prefs.getBoolean("fixed_area_enabled", false),
             autoAdd = prefs.getBoolean("auto_add", true),
             captureSound = prefs.getBoolean("sound_capture", prefs.getBoolean("sounds", true)),
@@ -121,6 +122,7 @@ internal class SettingsStorage(
                 .putInt("min_sharpness", settings.minSharpness)
                 .putInt("stable_frames", settings.stableFrames)
                 .putInt("rotation", settings.rotation)
+                .putBoolean("corner_net", settings.cornerNet)
                 .putBoolean("fixed_area_enabled", settings.fixedAreaEnabled)
                 .putString("fixed_area", settings.fixedArea?.joinToString(","))
                 .putBoolean("auto_add", settings.autoAdd)

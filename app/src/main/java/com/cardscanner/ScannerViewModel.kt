@@ -13,7 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.cardscanner.ai.CardIdentifier
 import com.cardscanner.ai.Foil
 import com.cardscanner.detection.CardTracker
-import com.cardscanner.detection.findCardOutline
+import com.cardscanner.detection.CardFinder
 import com.cardscanner.detection.scaled
 import com.cardscanner.detection.warpCard
 import com.cardscanner.inventory.CollectionRepository
@@ -75,6 +75,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     val serverPageUrl get() = processor.serverPageUrl
 
     private val tracker = CardTracker(settings.value.stableFrames, settings.value.minSharpness.toDouble())
+    init { CardFinder.install(application) }  // the corner network is loaded at the first frame
     private val analysisExecutor = Executors.newSingleThreadExecutor()
     private val captureExecutor = Executors.newSingleThreadExecutor()
     private val capturing = AtomicBoolean(false)
@@ -171,6 +172,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
         try {
             if (pendingReset) { pendingReset = false; tracker.reset() }
             tracker.setArea(settings.value.activeArea)
+            CardFinder.enabled = settings.value.cornerNet
             val frame = image.toRgbaMat(settings.value.rotation)
             val (state, trigger) = tracker.process(frame, _autoCapture.value, capturing.get())
             frame.release()
@@ -247,7 +249,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
         // The outline the flat card is cut by, in the still's pixels (also what the camera-frame note records)
         val outline = state.corners?.let { corners ->
             val guess = corners.scaled(scaleX, scaleY)
-            findCardOutline(full, previous = guess)?.corners ?: guess
+            CardFinder.find(full, previous = guess)?.corners ?: guess
         }
         val flat = outline?.let { corners ->
             val warped = warpCard(full, corners)
