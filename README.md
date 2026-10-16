@@ -86,7 +86,7 @@ collection in `core/` (`card_identifier.py`, `database.py`, `inventory.py`, ...)
 |---|---|---|
 | `detection/CardOutline.kt` | `object_detector.py` (`find_card_outline`, `warp_card`, `_is_whole_picture`; not ported: the gap closing and the card inside a box, `GAP_CLOSING`, `_card_inside_box`) | both modes |
 | `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds; the picture comparison is `_thumbnail_difference(smooth=True)` with `IMAGE_CHANGE_LIMIT` 0.35 since 2026-10-15 - `ThumbnailParityTest`, `thumbnail_reference.json`) - no focus sweep: the phone's continuous autofocus. The stillness limit is 1.5% (`STILL_LIMIT`, Python's `auto_capture.max_movement`), as the stations' since 2026-10-15; it was measured on the Pi 5's webcam, not yet on a phone's camera | both modes |
-| `Outbox.kt`, `CaptureProcessor.kt` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
+| `Outbox.kt`, `CaptureProcessor.kt`, `server/SendPolicy.kt` (when a capture stops being tried) | `station/station_client.py`: `Station.park`, `upload_verdict` (the server keeps its own record of captures being read: `pending.py`) | both modes |
 | `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
 | `detection/CornerNet.kt`, `CornerMath.kt`, `CardFinder.kt`; `assets/corner_net.onnx` | `station/corner_net.py` (the network, run with OpenCV's dnn) and `ObjectDetector.detect` / `_plausible_neural` in `station/object_detector.py` (asked before `findCardOutline`; the outline detector answers when it is unsure) - the same file as the stations' (retrained 2026-10-15 on 42 more labelled frames; `CornerNetParityTest` and `parity/reference.json` were remade from it: Kotlin within 0.10 px of Python on four frames); trained in the server's repository (`scripts/train_corner_net.py`). Settings → Find cards with the corner network. **Written 2026-10-15; compared with the Python code on an emulator, not yet tried on a phone's camera** | both modes |
 | `ui/CaptureWash.kt` (+ `ScannerScreen.kt`: `OutlineOverlay`) | `station/scanner.py`: `_mark_auto_card`, `_flash_capture`, `_wash_card` - a card found by its outline has no border, it is tinted in its state's colour (22%) and washed a stronger green (45%) fading out in 0.6 s at a capture; the fixed area keeps its rectangle and gets the wash. **Written 2026-10-15, not yet seen on a phone** | both modes |
@@ -179,6 +179,13 @@ the other way round.
   (`ServerRefused.cannotFollow`, `ScanResult.serverCannotFollow`). Any other failed removal (no
   connection, a wrong token) keeps the row to try again. Invalid addresses, rejected uploads and server errors keep the capture on disk
   for retry after correcting the configuration; a pending result is also kept until settled.
+  **Set aside** (`SendPolicy.kt`, `SendPolicyTest`; the stations' `Station.park`, since 2026-10-16): each
+  capture has its own retry loop, so none holds the others up, but one was retried every 30 s for ever. Now a
+  capture the server **refuses for good** (HTTP 400 / 413) stops being tried at once, and one it answers oddly
+  20 times (a 5xx or a page that is not JSON, a wrong token, a 404 from a proxy) stops after the 20th; no answer
+  at all (no network, the server away) never counts. A set-aside capture stays in the outbox with its photo,
+  its row says so, and the next start of the app tries it again. **Written 2026-10-16, tried by unit tests
+  only - not yet on a phone.**
   The station id is made once (`phone-xxxxxxxx`) and kept; the name defaults
   to the phone's model.
 - **Standalone**: only a missing connection makes a capture wait (no route, no DNS, a timeout:

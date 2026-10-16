@@ -8,6 +8,7 @@ import com.cardscanner.ai.CardReading
 import com.cardscanner.ai.Foil
 import com.cardscanner.inventory.CollectionRepository
 import com.cardscanner.inventory.FinishPolicy
+import com.cardscanner.server.SendPolicy
 import com.cardscanner.server.ScannerServer
 import com.cardscanner.server.ServerOutcome
 import com.cardscanner.server.ServerRefused
@@ -44,6 +45,9 @@ internal class CaptureProcessor(
     private val serverSlots = Semaphore(3)
     private val pendingItems = java.util.concurrent.ConcurrentHashMap<Long, Outbox.Item>()
     private val activeCaptures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // Odd answers of the server per capture (SendPolicy), and the captures set aside because of them
+    private val oddAnswers = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val parked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val _serverUndo = MutableStateFlow<Long?>(null)
     val serverUndo = _serverUndo.asStateFlow()
     private val serverUndoMutex = Mutex()
@@ -223,12 +227,17 @@ internal class CaptureProcessor(
                         }
                         if (finished) break
                     }
+                    // Set aside by sendOnce (SendPolicy): it stays in the outbox, the next start tries it again
+                    if (item.captureId in parked) break
                     kotlinx.coroutines.delay(wait)
                     wait = minOf(wait * 2, 30_000L)
                 }
             } finally {
                 activeCaptures.remove(item.captureId)
                 pendingItems.remove(id)
+                // (a parked capture is tried again by the next start: its marks go with this run)
+                parked.remove(item.captureId)
+                oddAnswers.remove(item.captureId)
             }
         }
     }
@@ -371,13 +380,36 @@ internal class CaptureProcessor(
             } else serverAnswered(id, outcome, (System.nanoTime() - start) / 1e9, server)
         } catch (e: ServerRefused) {
             Log.e(TAG, "The server refused capture #$id: ${e.message}")
+            if (setAside(id, item, e)) return false
             note(id, "Server: ${e.message} - capture saved; update Settings to retry")
             return false
         } catch (e: java.io.IOException) {
+            if (SendPolicy.oddAnswer(e)) {
+                Log.w(TAG, "Capture #$id: the server answered oddly (${e.message})")
+                if (setAside(id, item, e)) return false
+                note(id, "Server: ${e.message?.take(80)} - capture saved, trying again")
+                return false
+            }
             Log.w(TAG, "Capture #$id not sent (${e.message}) - waiting for the server")
             note(id, "Server not reachable - waiting to send…")
             return false
         }
+        return true
+    }
+
+    /**
+     * Whether this capture stops being tried now (SendPolicy): the server will never take it, or has
+     * answered oddly [SendPolicy.PARK_AFTER_ANSWERS] times. Its photo and note stay in the outbox; the
+     * next start of the app tries it again, and the other captures are not held up.
+     */
+    private fun setAside(id: Long, item: Outbox.Item, e: Exception): Boolean {
+        val forGood = SendPolicy.refusedForGood(e)
+        val times = if (SendPolicy.oddAnswer(e)) oddAnswers.merge(item.captureId, 1, Int::plus) ?: 1 else 0
+        if (!forGood && times < SendPolicy.PARK_AFTER_ANSWERS) return false
+        parked.add(item.captureId)
+        fail(id, if (forGood) "The server will not take this capture (${e.message}) - kept on the phone, tried again when the app starts"
+            else "The server kept answering oddly (${e.message?.take(80)}) - kept on the phone, tried again when the app starts")
+        Log.e(TAG, "Capture #$id set aside: ${e.message}")
         return true
     }
 
