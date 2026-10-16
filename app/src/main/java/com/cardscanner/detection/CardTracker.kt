@@ -254,7 +254,7 @@ class CardTracker(
     }
 
     /**
-     * True if the card is still and in focus: its corners moved less than ~1% of the card size
+     * True if the card is still and in focus: its corners moved less than ~1.5% of the card size
      * since the previous frame and since the still streak began, its sharpness changed by less
      * than 20% (autofocus still adjusting changes it a lot), and it is sharp enough to read.
      */
@@ -277,7 +277,7 @@ class CardTracker(
 
         val cardSize = (points[2] - points[0]).norm()
         val movement = (0 until 4).maxOf { (points[it] - prevPoints[it]).norm() } / cardSize
-        // Drift since the still streak began: a sleeved card sliding slowly moves less than 1%
+        // Drift since the still streak began: a sleeved card sliding slowly moves less than 1.5%
         // per frame and used to be captured mid-slide
         if (stableFrames == 0 || settleAnchor == null) settleAnchor = points
         val anchor = settleAnchor!!
@@ -290,7 +290,7 @@ class CardTracker(
         cardDisturbed = movement > 0.03 || imageChange > IMAGE_CHANGE_LIMIT
         lastFrameChange = movement to imageChange
         metrics = Metrics(movement, drift, sharpnessChange, sharpness)
-        val settled = movement < 0.01 && drift < 0.01 && sharpnessChange < 0.2 && cardInFocus
+        val settled = movement < STILL_LIMIT && drift < STILL_LIMIT && sharpnessChange < 0.2 && cardInFocus
         if (!settled) settleAnchor = points
         return settled
     }
@@ -375,6 +375,16 @@ class CardTracker(
             val std = kotlin.math.sqrt(values.sumOf { (it - mean) * (it - mean) } / values.size)
             return FloatArray(values.size) { ((values[it] - mean) / (std + 1e-6)).toFloat() }
         }
+
+        /**
+         * How far a card's corners may move (a fraction of its size) between frames, and over the
+         * still streak, for the card to count as still. Python: Config.AUTO_CAPTURE_MAX_MOVEMENT
+         * (auto_capture.max_movement). 1% until 2026-10-15; the corner network's outline of a still
+         * card wobbles 1-1.5%, which kept sharp cards waiting 5-15 s (a Pi 5 run of 211 cards: 18
+         * waits of 5 s or more). 1.5% there ran the same 69-card pile with no double and no long
+         * wait; 2% gave one double and was put back.
+         */
+        const val STILL_LIMIT = 0.015
 
         /**
          * What counts as "the picture of the card changed" (smoothed thumbnails). Python:

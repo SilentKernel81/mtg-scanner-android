@@ -85,7 +85,7 @@ collection in `core/` (`card_identifier.py`, `database.py`, `inventory.py`, ...)
 | Android | Python | Used in |
 |---|---|---|
 | `detection/CardOutline.kt` | `object_detector.py` (`find_card_outline`, `warp_card`, `_is_whole_picture`; not ported: the gap closing and the card inside a box, `GAP_CLOSING`, `_card_inside_box`) | both modes |
-| `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds; the picture comparison is `_thumbnail_difference(smooth=True)` with `IMAGE_CHANGE_LIMIT` 0.35 since 2026-10-15 - `ThumbnailParityTest`, `thumbnail_reference.json`) - no focus sweep: the phone's continuous autofocus. The stations' stillness limit was raised to 1.5% on 2026-10-15 for the Pi 5's webcam; the app's is still 1% (no evidence from a phone) | both modes |
+| `detection/CardTracker.kt` | `scanner.py` (`_is_card_settled`, `_new_card_arrived`, `_outline_flicker`; fixed area: `_fixed_area_step`, same thresholds; the picture comparison is `_thumbnail_difference(smooth=True)` with `IMAGE_CHANGE_LIMIT` 0.35 since 2026-10-15 - `ThumbnailParityTest`, `thumbnail_reference.json`) - no focus sweep: the phone's continuous autofocus. The stillness limit is 1.5% (`STILL_LIMIT`, Python's `auto_capture.max_movement`), as the stations' since 2026-10-15; it was measured on the Pi 5's webcam, not yet on a phone's camera | both modes |
 | `Outbox.kt`, `CaptureProcessor.kt` | - (the server keeps its own record of captures being read: `pending.py`) | both modes |
 | `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
 | `detection/CornerNet.kt`, `CornerMath.kt`, `CardFinder.kt`; `assets/corner_net.onnx` | `station/corner_net.py` (the network, run with OpenCV's dnn) and `ObjectDetector.detect` / `_plausible_neural` in `station/object_detector.py` (asked before `findCardOutline`; the outline detector answers when it is unsure) - the same file as the stations' (retrained 2026-10-15 on 42 more labelled frames; `CornerNetParityTest` and `parity/reference.json` were remade from it: Kotlin within 0.10 px of Python on four frames); trained in the server's repository (`scripts/train_corner_net.py`). Settings → Find cards with the corner network. **Written 2026-10-15; compared with the Python code on an emulator, not yet tried on a phone's camera** | both modes |
@@ -268,7 +268,7 @@ first, which removes the app's data.
 
 Not done yet:
 
-- The thresholds (sharpness 250, movement 1%, ...) were measured with the Python scanner's USB
+- The thresholds (sharpness 250, movement 1.5%, ...) were measured with the Python scanner's USB
   webcam; re-measure on phones (minimum sharpness and still frames are in Settings).
 - Standalone auto mode with outline detection has not been measured; nor a long offline pile
   on a real phone, nor a fixed-area capture in client mode (it sends a second picture).
