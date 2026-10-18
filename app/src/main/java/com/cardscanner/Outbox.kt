@@ -48,6 +48,10 @@ class Outbox(context: Context) {
         val deleteRequested: Boolean
             get() = synchronized(this@Outbox) { metaFile.isFile && JSONObject(metaFile.readText()).optBoolean("delete_requested") }
 
+        /** A photo import (standalone): the card goes to the review queue whatever the match, also after a restart */
+        val reviewOnly: Boolean
+            get() = synchronized(this@Outbox) { metaFile.isFile && JSONObject(metaFile.readText()).optBoolean("review_only") }
+
         /** Retries and queued removals belong to the server that first received this capture. */
         fun bindServer(url: String, station: String) = synchronized(this@Outbox) {
             val data = JSONObject(metaFile.readText())
@@ -100,10 +104,10 @@ class Outbox(context: Context) {
 
     /**
      * Save a capture (card: the photo; foilCard: the flat card for the ★/• check, or null;
-     * frame: the camera frame it was cut from, or null)
+     * frame: the camera frame it was cut from, or null; reviewOnly: never added automatically)
      */
     @Synchronized
-    fun add(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null): Item {
+    fun add(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null, reviewOnly: Boolean = false): Item {
         val item = Item(UUID.randomUUID().toString(), foilIsCard = foilCard === card, hasFoil = foilCard != null && foilCard !== card)
         try {
             save(card, item.cardFile)
@@ -115,6 +119,7 @@ class Outbox(context: Context) {
             val stream = meta.startWrite()
             try {
                 val note = JSONObject().put("foil_is_card", item.foilIsCard)
+                if (reviewOnly) note.put("review_only", true)
                 if (frame != null) {
                     note.put("frame_meta", frame.meta.put("capture_id", item.captureId)
                         .put("previous_capture_id", previousCaptureId ?: JSONObject.NULL))

@@ -1,6 +1,11 @@
 package com.cardscanner.ui
 
 import androidx.camera.core.CameraSelector
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
@@ -16,6 +21,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.FilledTonalButton
@@ -90,7 +96,8 @@ import android.widget.Toast
  * over the scanner; standalone mode also offers the full local collection.
  */
 @Composable
-fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInventory: () -> Unit, onReview: () -> Unit) {
+fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInventory: () -> Unit, onReview: () -> Unit,
+                  onImportPhoto: () -> Unit) {
     val detection by viewModel.detection.collectAsStateWithLifecycle()
     val captures by viewModel.captureFlashes.collectAsStateWithLifecycle()
     // 1 at a capture, fading to 0: the card is washed green by it (OutlineOverlay)
@@ -166,6 +173,7 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
             IconButton(onClick = { torch = !torch }) {
                 Icon(if (torch) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light")
             }
+            IconButton(onClick = onImportPhoto) { Icon(Icons.Default.AddPhotoAlternate, "Import cards from a photo") }
             if (areaOn) TextButton(onClick = { drawingArea = true }) { Text("Redraw area") }
             Spacer(Modifier.weight(1f))
             if (latestScan != null) {
@@ -211,6 +219,20 @@ fun ScannerScreen(viewModel: ScannerViewModel, onSettings: () -> Unit, onInvento
     }
 }
 
+/**
+ * The camera's frame rate range closest to 15 fps from below (a fixed 15-15 if it has one): half
+ * the frames of the default 30 fps, which the sensor, the image pipeline and the analysis all pay
+ * for. Auto-capture needs a card still for a few frames, not 30 a second.
+ */
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+private fun lowFrameRate(provider: ProcessCameraProvider): android.util.Range<Int>? = runCatching {
+    val info = CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
+    Camera2CameraInfo.from(info).getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+        ?.filter { it.upper in 10..15 }
+        ?.maxWithOrNull(compareBy({ it.upper }, { it.lower }))
+}.getOrNull()
+
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
 @Composable
 private fun CameraPreview(viewModel: ScannerViewModel, torch: Boolean, rotation: Int) {
     val context = LocalContext.current
@@ -231,10 +253,13 @@ private fun CameraPreview(viewModel: ScannerViewModel, torch: Boolean, rotation:
             // Everything in 4:3 (the sensor's own shape): preview, analysis and stills show the
             // same view, so outlines found in analysis frames also fit the still
             val fourByThree = AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+            val fps = lowFrameRate(provider)
             val preview = Preview.Builder()
+                .also { builder -> fps?.let { Camera2Interop.Extender(builder).setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) } }
                 .setResolutionSelector(ResolutionSelector.Builder().setAspectRatioStrategy(fourByThree).build())
                 .build().also { it.surfaceProvider = previewView.surfaceProvider }
             val analysis = ImageAnalysis.Builder()
+                .also { builder -> fps?.let { Camera2Interop.Extender(builder).setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) } }
                 .setResolutionSelector(ResolutionSelector.Builder()
                     .setAspectRatioStrategy(fourByThree)
                     .setResolutionStrategy(ResolutionStrategy(android.util.Size(1280, 960), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))

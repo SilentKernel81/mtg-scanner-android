@@ -55,7 +55,7 @@ private fun orderCorners(pts: List<Pt>): Corners {
     )
 }
 
-private fun boxCorners(rect: org.opencv.core.RotatedRect): Corners {
+internal fun boxCorners(rect: org.opencv.core.RotatedRect): Corners {
     val box = Mat()
     Imgproc.boxPoints(rect, box)
     val pts = (0 until 4).map { Pt(box.get(it, 0)[0], box.get(it, 1)[0]) }
@@ -63,14 +63,14 @@ private fun boxCorners(rect: org.opencv.core.RotatedRect): Corners {
     return orderCorners(pts)
 }
 
-private fun kernel(size: Int) = Mat.ones(size, size, CvType.CV_8U)
+internal fun kernel(size: Int) = Mat.ones(size, size, CvType.CV_8U)
 
 /**
  * True if the outline looks like the frame *inside* a card's dark border rather than the card's
  * outer edge: the band just outside it is darker than the band just inside. Assumes a background
  * lighter than the card border, like a white scanning box.
  */
-private fun isInnerFrame(gray: Mat, corners: Corners, band: Int = 4): Boolean {
+internal fun isInnerFrame(gray: Mat, corners: Corners, band: Int = 4): Boolean {
     val polygon = Mat.zeros(gray.size(), CvType.CV_8U)
     Imgproc.fillPoly(polygon, listOf(MatOfPoint(*corners.map { Point(it.x.toInt().toDouble(), it.y.toInt().toDouble()) }.toTypedArray())), Scalar(255.0))
     val k = kernel(2 * band + 1)
@@ -110,7 +110,7 @@ private fun isRectangular(c: Corners, sideTolerance: Double = 0.08, angleToleran
  * zero, the sensor's noise becomes one sheet of edges, and the sheet's outline is the picture.
  * (Port of object_detector.py: _is_whole_picture, where it was seen and measured.)
  */
-private fun isWholePicture(c: Corners, width: Int, height: Int, margin: Int = 3): Boolean =
+internal fun isWholePicture(c: Corners, width: Int, height: Int, margin: Int = 3): Boolean =
     c.minOf { it.x } <= margin && c.minOf { it.y } <= margin &&
         c.maxOf { it.x } >= width - 1 - margin && c.maxOf { it.y } >= height - 1 - margin
 
@@ -265,7 +265,7 @@ private fun trackOutline(rawEdges: Mat, edges: Mat, gray: Mat, previous: Corners
     return if (ok) Candidate(area, corners, 1.0) else null
 }
 
-private fun median(gray: Mat): Double {
+internal fun median(gray: Mat): Double {
     val hist = IntArray(256)
     for (b in bytesOf(gray)) hist[b.toInt() and 0xFF]++
     val total = gray.total()

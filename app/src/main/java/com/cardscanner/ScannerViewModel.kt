@@ -3,6 +3,7 @@ package com.cardscanner
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -14,6 +15,7 @@ import com.cardscanner.ai.CardIdentifier
 import com.cardscanner.ai.Foil
 import com.cardscanner.detection.CardTracker
 import com.cardscanner.detection.CardFinder
+import com.cardscanner.detection.IdleGate
 import com.cardscanner.detection.scaled
 import com.cardscanner.detection.warpCard
 import com.cardscanner.inventory.CollectionRepository
@@ -25,7 +27,9 @@ import com.cardscanner.scryfall.CardDataRepository
 import com.cardscanner.scryfall.Printing
 import com.cardscanner.scryfall.Scryfall
 import com.cardscanner.settings.SettingsRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -84,6 +88,8 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     private val captureExecutor = Executors.newSingleThreadExecutor()
     private val capturing = AtomicBoolean(false)
     @Volatile private var pendingReset = false
+    private val idleGate = IdleGate()
+    private var quietFrames = 0  // analysed frames in a row with no card or the captured one still lying there
     var imageCapture: ImageCapture? = null
 
     init {
@@ -174,6 +180,9 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
 
     private fun analyze(image: ImageProxy) {
         try {
+            // An unchanged, idle box is looked at a few times a second, not on every frame
+            val idle = quietFrames >= QUIET_FRAMES_FOR_IDLE && !pendingReset
+            if (!idleGate.shouldProcess(image.sample(), idle, SystemClock.elapsedRealtime())) return
             if (pendingReset) { pendingReset = false; tracker.reset() }
             tracker.setArea(settings.value.activeArea)
             CardFinder.enabled = settings.value.cornerNet
@@ -181,12 +190,83 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
             val (state, trigger) = tracker.process(frame, _autoCapture.value, capturing.get())
             frame.release()
             _detection.value = state
+            quietFrames = if (state.status == CardTracker.Status.NO_CARD || state.status == CardTracker.Status.CAPTURED) quietFrames + 1 else 0
             state.message?.let { Log.i(TAG, it) }
             if (trigger) capture(state)
         } catch (e: Exception) {
             Log.e(TAG, "Frame analysis failed", e)
         } finally {
             image.close()
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Photo import: several cards from one photo
+    // ------------------------------------------------------------------------
+
+    private val photoImporter = PhotoImporter(application)
+    private val _photoImport = MutableStateFlow<PhotoImportState?>(null)
+    /** The photo being checked before its cards are imported, or null */
+    val photoImport = _photoImport.asStateFlow()
+    private val _photoBusy = MutableStateFlow<String?>(null)
+    /** What the import is doing now ("Finding the cards…", "Importing 3 of 9…"), or null */
+    val photoBusy = _photoBusy.asStateFlow()
+
+    /** A photo was picked: decode it and look for the cards */
+    fun startPhotoImport(uri: android.net.Uri) {
+        if (_photoBusy.value != null) return
+        _photoBusy.value = "Finding the cards…"
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val photo = photoImporter.decode(uri)
+                _photoImport.value = PhotoImportState(photo, photoImporter.detect(photo))
+            } catch (e: Exception) {
+                Log.e(TAG, "Photo could not be opened", e)
+                _message.value = "Could not open the photo: ${e.message}"
+            } catch (e: OutOfMemoryError) {
+                Log.e(TAG, "Photo too large to open", e)
+                _message.value = "The photo is too large to open"
+            } finally { _photoBusy.value = null }
+        }
+    }
+
+    fun cancelPhotoImport() {
+        if (_photoBusy.value != null) return
+        _photoImport.value?.photo?.recycle()
+        _photoImport.value = null
+    }
+
+    /**
+     * The outlines the user confirmed: cut out one at a time into the capture path. Cards that
+     * could not be cut or saved are not reported as imported: the photo stays open with just
+     * those outlines, to try again - the ones saved are not sent a second time.
+     */
+    fun importPhotoCards(outlines: List<com.cardscanner.detection.Corners>) {
+        val state = _photoImport.value ?: return
+        if (_photoBusy.value != null || outlines.isEmpty()) return
+        _photoBusy.value = "Importing 0 of ${outlines.size}…"
+        viewModelScope.launch(Dispatchers.Default) {
+            var failed = outlines
+            try {
+                failed = photoImporter.importCards(state.photo, outlines,
+                    // The flat card is also the picture for the ★/• check; reviewOnly: see CaptureProcessor.enqueue
+                    enqueue = { card -> processor.enqueue(card, card, null, reviewOnly = true) },
+                    onProgress = { _photoBusy.value = "Importing $it of ${outlines.size}…" })
+            } catch (e: Exception) {
+                Log.e(TAG, "Photo import failed", e)
+            } finally {
+                val saved = outlines.size - failed.size
+                if (failed.isEmpty()) {
+                    _message.value = "$saved card(s) from the photo are being read"
+                    _photoImport.value = null
+                    state.photo.recycle()
+                } else {
+                    _message.value = (if (saved > 0) "$saved of ${outlines.size} saved. " else "") +
+                        "${failed.size} could not be saved - Import tries just those again"
+                    _photoImport.value = PhotoImportState(state.photo, failed)
+                }
+                _photoBusy.value = null
+            }
         }
     }
 
@@ -326,6 +406,25 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
 
 private fun Mat.toBitmap(): Bitmap =
     Bitmap.createBitmap(cols(), rows(), Bitmap.Config.ARGB_8888).also { Utils.matToBitmap(this, it) }
+
+private const val QUIET_FRAMES_FOR_IDLE = 8
+private const val SAMPLE_COLUMNS = 40
+private const val SAMPLE_ROWS = 30
+
+/** A coarse grid of green values of the RGBA frame: enough to see that the picture changed */
+private fun ImageProxy.sample(): ByteArray {
+    val plane = planes[0]
+    val buffer = plane.buffer
+    val out = ByteArray(SAMPLE_COLUMNS * SAMPLE_ROWS)
+    for (row in 0 until SAMPLE_ROWS) {
+        val y = (row * 2 + 1) * height / (SAMPLE_ROWS * 2)
+        for (column in 0 until SAMPLE_COLUMNS) {
+            val x = (column * 2 + 1) * width / (SAMPLE_COLUMNS * 2)
+            out[row * SAMPLE_COLUMNS + column] = buffer.get(y * plane.rowStride + x * plane.pixelStride + 1)
+        }
+    }
+    return out
+}
 
 /** RGBA_8888 analysis frame as an upright RGBA Mat, turned `extraRotation` degrees further clockwise */
 private fun ImageProxy.toRgbaMat(extraRotation: Int): Mat {

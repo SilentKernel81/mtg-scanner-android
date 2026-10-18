@@ -116,6 +116,8 @@ collection modules in `core/`, `server/stations_api.py` as written.
 | Live scan progress and inventory browsing | `ui/InventoryBrowser.kt` overlays the scanner to keep auto capture running; shared single-image rows in `ui/ScanCard.kt` |
 | Visual theme and shared rounded surfaces | `ui/ScannerTheme.kt`, `ui/FeedComponents.kt` |
 | Sound effects (the web UI's beeps) | `Sounds.kt` |
+| Several cards from one photo (binder page, cards on a table): picked, outlines checked by the user, cut out one at a time into the capture path (standalone: always to the review queue - `Outbox` `review_only`; client mode: the server's rules). Not ports of the server | `PhotoImport.kt` (`PhotoImporter`: decode - ImageDecoder on API 28+, BitmapFactory + EXIF below - `detect`, `importCards` returns the cards not saved), `ScannerViewModel.kt`: `startPhotoImport`, `importPhotoCards`; `detection/MultiCardFinder.kt` (contours) + `MultiCard.kt` (overlaps, page vs cards, grid cells, JVM-tested); `ui/PhotoImportScreen.kt`; `androidTest/PhotoImportTest.kt` |
+| Battery: idle analysis, frame rate, dimming | `detection/IdleGate.kt` (an unchanged idle box is analysed every 500 ms, any change wakes it) used in `ScannerViewModel.analyze`; the 15 fps range in `ScannerScreen.kt`: `lowFrameRate`; dimming after 60 s idle in `MainActivity.kt` |
 
 ## Conventions and Pitfalls
 
@@ -157,6 +159,11 @@ collection modules in `core/`, `server/stations_api.py` as written.
 - **Frames**: analysis frames are ~1280x960 (4:3), turned upright plus the user's extra rotation;
   stills are ~3264x2448 in the same 4:3 view, so outlines / areas only need scaling and the still
   is searched again for the exact edges (`cutOutCard`). In fixed-area mode the photo is the area.
+- **Analysis is throttled while the box is idle** (`IdleGate`): the stillness and new-card thresholds
+  were measured at full frame rate, so only a scene with no card (or the captured one lying still)
+  is throttled; a card being tracked is analysed on every frame. The camera runs at 15 fps.
+- **Photo import** never uses the corner network (`CardFinder`): its `Net` belongs to the live
+  analysis thread. It uses `findCardOutline` for refining each cut.
 - **Fixed area** assumes the phone doesn't move (it compares a fixed spot of the image).
 - **Preview rotation** needs `PreviewView.ImplementationMode.COMPATIBLE` (TextureView); a
   SurfaceView ignores view rotation.

@@ -167,22 +167,35 @@ internal class CaptureProcessor(
 
     fun warmUp() { scope.launch(Dispatchers.IO) { identifier().warmUp() } }
 
-    /** A capture: shown in the list, saved in the outbox and processed (see process) */
-    fun enqueue(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null) {
+    /**
+     * A capture: shown in the list, saved in the outbox and processed (see process). reviewOnly
+     * (a photo import): standalone mode queues the card for review instead of adding it; client
+     * mode follows the server's rules. True when the capture is durably saved in the outbox.
+     */
+    fun enqueue(card: Bitmap, foilCard: Bitmap?, frame: CapturedFrame? = null, reviewOnly: Boolean = false): Boolean {
         val id = showScan(card)
+        var saved = false  // the disk item exists: a failure after that is not a failed save
         try {
             // This runs on the capture executor. Save before launching any queued work,
             // so pending coroutines retain only a disk item, never full-resolution photos.
             synchronized(outbox) {
-                val item = outbox.add(card, foilCard, frame)
+                val item = outbox.add(card, foilCard, frame, reviewOnly)
+                saved = true
                 refreshWaiting()
                 Log.i(TAG, "Capture #$id saved: ${card.width}x${card.height}")
                 process(id, item)
             }
+            return true
         } catch (e: Exception) {
+            if (saved) {
+                Log.e(TAG, "Capture #$id saved but could not be started", e)
+                note(id, "Saved - it will be tried again at the next start: ${e.message}")
+                return true
+            }
             Log.e(TAG, "Could not save capture #$id", e)
             fail(id, "Capture could not be saved: ${e.message}")
             onSaveFailure()
+            return false
         } finally {
             if (foilCard != null && foilCard !== card) foilCard.recycle()
             if (history.scans.value.none { it.thumbnail === card }) card.recycle()
@@ -253,7 +266,7 @@ internal class CaptureProcessor(
         try {
             foilPhoto = item.foil(photo)
             return if (serverMode) sendOnce(id, photo, foilPhoto, item, start)
-                else identifyOnce(id, photo, foilPhoto, item.captureId, start)
+                else identifyOnce(id, photo, foilPhoto, item.captureId, start, item.reviewOnly)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -270,7 +283,8 @@ internal class CaptureProcessor(
      * Standalone: identify a capture and add it, queue it for review or leave it for Add.
      * False when there is no network; true only after a durable inventory/review write.
      */
-    private suspend fun identifyOnce(id: Long, card: Bitmap, foilCard: Bitmap?, captureId: String, start: Long): Boolean {
+    private suspend fun identifyOnce(id: Long, card: Bitmap, foilCard: Bitmap?, captureId: String, start: Long,
+                                     reviewOnly: Boolean = false): Boolean {
         val thumbnail = history.scans.value.firstOrNull { it.id == id }?.thumbnail ?: emptyBitmap
         lateinit var reading: CardReading
         var marker = Foil.UNKNOWN
@@ -311,7 +325,7 @@ internal class CaptureProcessor(
             (result.printing?.let { "${it.name} ${it.setCode} #${it.collectorNumber} (${it.match})" } ?: "not found") +
             " foil=${result.foil} in %.1f s".format(result.seconds) +
             " - ${settings.provider.id}/${settings.model()} tokens ${result.usage}")
-        collection.settleCapture(id, card, reading, marker, result, captureId, settings)
+        collection.settleCapture(id, card, reading, marker, result, captureId, settings, reviewOnly)
         return true
     }
 

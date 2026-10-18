@@ -275,19 +275,20 @@ internal class CollectionRepository(
     fun shareHandled() { _share.value = null }
 
     suspend fun settleCapture(id: Long, card: Bitmap, reading: CardReading, marker: Foil,
-                              result: ScanResult, captureId: String, settings: AppSettings) {
+                              result: ScanResult, captureId: String, settings: AppSettings, reviewOnly: Boolean = false) {
         inventoryMutex.withLock {
-            val added = if (settings.autoAdd && result.printing?.confirmed == true)
+            val added = if (!reviewOnly && settings.autoAdd && result.printing?.confirmed == true)
                 inventory.add(result.printing, result.finish, operationId = "capture:$captureId") else null
             history.update { list -> list.map { if (it.id == id) result.copy(inventoryId = added) else it } }
             if (added != null) {
                 _inventoryEntries.value = inventory.all()
                 if (settings.addedSound) Sounds.added()
             } else {
-                val why = if (!settings.autoAdd && result.printing != null) "Waiting for Add"
+                val why = if (reviewOnly) result.printing?.let { "Photo import: check (matched by ${it.match.replace('_', ' ')})" } ?: "Photo import: not found on Scryfall"
+                    else if (!settings.autoAdd && result.printing != null) "Waiting for Add"
                     else result.printing?.let { "Check: matched by ${it.match.replace('_', ' ')}" } ?: "Not found on Scryfall"
                 queueForReviewLocked(id, card, reading, marker, result.printing, why, captureId,
-                    pendingAdd = !settings.autoAdd && result.printing != null)
+                    pendingAdd = !reviewOnly && !settings.autoAdd && result.printing != null)
             }
         }
     }
