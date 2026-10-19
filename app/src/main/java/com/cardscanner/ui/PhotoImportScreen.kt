@@ -93,6 +93,7 @@ private val Handle = Color(0xFFFFC107)
 private fun ColumnScope.PhotoPreview(state: PhotoImportState, busy: String?, serverMode: Boolean,
                          onImport: (List<Corners>) -> Unit, onCancel: () -> Unit) {
     val width = state.photo.width.toDouble(); val height = state.photo.height.toDouble()
+    var picking by remember { mutableStateOf(!state.retry) }
     var gridMode by remember { mutableStateOf(state.detected.isEmpty()) }
     var columns by remember { mutableIntStateOf(3) }
     var rows by remember { mutableIntStateOf(3) }
@@ -109,6 +110,13 @@ private fun ColumnScope.PhotoPreview(state: PhotoImportState, busy: String?, ser
     val pageNow by rememberUpdatedState(page)
     val outlines = if (gridMode) MultiCard.gridCells(page, columns, rows) else state.detected
     val chosen = outlines.filterIndexed { i, _ -> i !in leftOut }
+
+    if (picking) {
+        LayoutChoice(state, onFound = { gridMode = false; picking = false },
+            onGrid = { c, r -> columns = c; rows = r; gridMode = true; leftOut = emptySet(); picking = false },
+            onCancel = onCancel)
+        return
+    }
 
     // photo pixels <-> canvas pixels (the photo fitted in the canvas)
     val fit = if (canvas.width == 0) 1.0 else min(canvas.width / width, canvas.height / height)
@@ -175,7 +183,8 @@ private fun ColumnScope.PhotoPreview(state: PhotoImportState, busy: String?, ser
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             FilterChip(selected = !gridMode, onClick = { gridMode = false; leftOut = emptySet() },
                 label = { Text("Found (${state.detected.size})") }, enabled = busy == null)
-            FilterChip(selected = gridMode, onClick = { gridMode = true; leftOut = emptySet() },
+            // (a retry holds just the cards not saved: a grid would bring back the saved ones)
+            if (!state.retry) FilterChip(selected = gridMode, onClick = { gridMode = true; leftOut = emptySet() },
                 label = { Text("Grid") }, enabled = busy == null)
             if (gridMode) {
                 Stepper("Columns", columns, busy == null) { columns = it.coerceIn(1, 8); leftOut = emptySet() }
@@ -184,6 +193,7 @@ private fun ColumnScope.PhotoPreview(state: PhotoImportState, busy: String?, ser
         }
         Text(
             if (gridMode) "Drag the yellow corners to the page's corners; tap a card to leave it out."
+            else if (state.retry) "These cards could not be saved - Import tries just them again."
             else if (state.detected.isEmpty()) "No cards found - use Grid and drag its corners to the page."
             else "Tap a card to leave it out. A card missed or cut wrong? Use Grid.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -197,6 +207,33 @@ private fun ColumnScope.PhotoPreview(state: PhotoImportState, busy: String?, ser
                 Text(busy ?: "Import ${chosen.size} card${if (chosen.size == 1) "" else "s"}")
             }
         }
+    }
+}
+
+/** What the photo shows: the layout of a binder page (9 or 12 pockets, either way up) or loose cards */
+@Composable
+private fun ColumnScope.LayoutChoice(state: PhotoImportState, onFound: () -> Unit,
+                                     onGrid: (columns: Int, rows: Int) -> Unit, onCancel: () -> Unit) {
+    val image = remember(state.photo) { state.photo.asImageBitmap() }
+    Canvas(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+        val fit = min(size.width / image.width, size.height / image.height)
+        val w = (image.width * fit).toInt(); val h = (image.height * fit).toInt()
+        drawImage(image, dstOffset = IntOffset(((size.width - w) / 2).toInt(), ((size.height - h) / 2).toInt()),
+            dstSize = IntSize(w, h))
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("What is in the photo?", style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button({ onGrid(3, 3) }, Modifier.weight(1f)) { Text("9 pockets\n3 × 3") }
+            Button({ onGrid(4, 3) }, Modifier.weight(1f)) { Text("12 pockets\n4 × 3") }
+            Button({ onGrid(3, 4) }, Modifier.weight(1f)) { Text("12 pockets\n3 × 4") }
+        }
+        OutlinedButton(onFound, Modifier.fillMaxWidth()) {
+            Text(if (state.detected.isEmpty()) "Loose cards (none found yet)" else "Loose cards (${state.detected.size} found)")
+        }
+        Text("A binder page is then laid over the photo: drag its corners to the page. Another size? Change it in the next step.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onCancel, Modifier.fillMaxWidth()) { Text("Cancel") }
     }
 }
 

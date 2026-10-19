@@ -21,8 +21,11 @@ import org.opencv.core.Mat
 import org.opencv.core.Rect
 import kotlin.math.max
 
-/** A photo picked for import and the card outlines found in it, in the photo's pixels */
-class PhotoImportState(val photo: Bitmap, val detected: List<Corners>)
+/**
+ * A photo picked for import and the card outlines found in it, in the photo's pixels. `retry`: the
+ * outlines are the cards a partly failed import could not save - the rest are already in the capture path.
+ */
+class PhotoImportState(val photo: Bitmap, val detected: List<Corners>, val retry: Boolean = false)
 
 /**
  * Several cards from one photo (a binder page, cards on a table): decode it, find the cards, and -

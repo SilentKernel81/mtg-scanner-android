@@ -263,7 +263,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
                 } else {
                     _message.value = (if (saved > 0) "$saved of ${outlines.size} saved. " else "") +
                         "${failed.size} could not be saved - Import tries just those again"
-                    _photoImport.value = PhotoImportState(state.photo, failed)
+                    _photoImport.value = PhotoImportState(state.photo, failed, retry = true)
                 }
                 _photoBusy.value = null
             }
