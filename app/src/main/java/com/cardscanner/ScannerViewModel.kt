@@ -232,8 +232,14 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
 
     fun cancelPhotoImport() {
         if (_photoBusy.value != null) return
-        _photoImport.value?.photo?.recycle()
+        val photo = _photoImport.value?.photo
         _photoImport.value = null
+        photo?.let(::recycleWhenUnshown)
+    }
+
+    /** The screen may draw the photo once more after the state is cleared: recycling at once crashes it */
+    private fun recycleWhenUnshown(photo: android.graphics.Bitmap) {
+        viewModelScope.launch { kotlinx.coroutines.delay(2000); photo.recycle() }
     }
 
     /**
@@ -259,7 +265,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
                 if (failed.isEmpty()) {
                     _message.value = "$saved card(s) from the photo are being read"
                     _photoImport.value = null
-                    state.photo.recycle()
+                    recycleWhenUnshown(state.photo)
                 } else {
                     _message.value = (if (saved > 0) "$saved of ${outlines.size} saved. " else "") +
                         "${failed.size} could not be saved - Import tries just those again"
