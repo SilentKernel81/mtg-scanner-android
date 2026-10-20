@@ -1,0 +1,17 @@
+{
+ "fp_synthetic_1234.png": {
+  "width": 488,
+  "height": 680,
+  "hash_hex": "e1fff48974b695dff190ee012bef1b00a4e61b474b00e4bddc760000dfe7f0289182e06ddb546c33b4ab9b44ab55d4b2c1fcd46cbe558b2a36ee31553132366cd499e0b9db114b57d1961b47ab0d7bd9118d7bcfee41864744c1e6dd80c908d9"
+ },
+ "fp_synthetic_99.png": {
+  "width": 488,
+  "height": 680,
+  "hash_hex": "fbbaa1f5d1b2db5510c38b496e39c49a2469c6a95f503ba891d431b60db2cdb281aa11aa9eaad1badb8adea26b32e1d6e192e1d33f575c56945244f2c0faf02ae0e1a4e7bb3e359e1b1940d39cc1d4d68b16c71d5619696d70e639d6428a176b"
+ },
+ "fp_capture.png": {
+  "width": 361,
+  "height": 504,
+  "hash_hex": "905036fe1aa3cd20291c9f74d0e4d2c22dddc4da6f2193fc3f2889d55afbc09bd05636fc1bc2cd292d179f75b0e4f2502d15e4ca270593ec4d2888d56efbc09fd0c436fc9b42cd093d979f65b164fa502d05e4ce270593fc4d2889c56efbc08f"
+ }
+}
