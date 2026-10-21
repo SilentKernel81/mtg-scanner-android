@@ -12,7 +12,8 @@ import org.junit.Test
  * The decision (Decide.kt) passes the test files the scanner server's Python code passes:
  *  - reading_decision_cases.json: HAND-written, the answer a person working rule A2 out by hand expects;
  *  - reading_regression_cases.json: CAPTURED from the server's lookup on real pictures (ids and similarities only);
- *  - reading_finish_cases.json: HAND-written, the finish as evidence.
+ *  - reading_finish_cases.json: HAND-written, the finish as evidence;
+ *  - reading_guard_cases.json: HAND-written, the guards around a decision (acceptPrinting, confirmByOcr).
  * They are COPIES made by reading_reference.py from the server's tests/data - never edited here.
  */
 class ReadingDecideParityTest {
@@ -137,5 +138,41 @@ class ReadingDecideParityTest {
         // and the strip's own set is not lower-cased: an upper-case "TST" names nothing
         val lower = listOf(Decide.Candidate("a", 0.875, "tst", "1"), Decide.Candidate("b", 0.375, "tst", "2"))
         assertEquals("image", Decide.printing(lower, Decide.Strip("1", "TST")).path)
+    }
+
+    private fun optString(json: JSONObject, key: String): String? = if (json.isNull(key)) null else json.getString(key)
+
+    @Test
+    fun theGuardCasesGiveTheirAnswers() {
+        val cases = load("reading_guard_cases.json").getJSONArray("cases")
+        assertTrue("the case file is missing or too small", cases.length() >= 20)
+        val refused = HashSet<String>()
+        for (i in 0 until cases.length()) {
+            val case = cases.getJSONObject(i)
+            val expected = case.getJSONObject("expected")
+            val got = if (case.getString("kind") == "accept") {
+                val d = case.getJSONObject("decision")
+                val f = case.getJSONObject("facts")
+                Decide.acceptPrinting(
+                    Decide.PrintingDecision(d.getString("path"), optString(d, "printing_id"),
+                        if (d.isNull("similarity")) null else d.getDouble("similarity"), if (d.isNull("lead")) null else d.getDouble("lead")),
+                    Decide.Facts(f.getBoolean("accept_image_alone"), if (f.isNull("index_covers")) null else f.getBoolean("index_covers"),
+                        f.getBoolean("in_data"), optString(f, "strip_names"), f.getBoolean("ocr_on")),
+                )
+            } else {
+                val o = case.optJSONObject("ocr")
+                Decide.confirmByOcr(o?.let { Decide.OcrFacts(it.getBoolean("name_matches"), optString(it, "line_names")) })
+            }
+            val want = Decide.Acceptance(expected.getBoolean("accepted"), optString(expected, "refused"), expected.optBoolean("needs_ocr", false))
+            assertEquals(case.getString("name"), want, got)
+            want.refused?.let { refused += it }
+        }
+        assertEquals(Decide.GUARDS.toSet(), refused)                  // every guard has a case
+    }
+
+    @Test
+    fun theGuardFloorsAreTheServers() {
+        assertEquals(0.5, Decide.IMAGE_MIN_SIMILARITY, 0.0)
+        assertEquals(0.30, Decide.STRONG_MIN_SIMILARITY, 0.0)
     }
 }

@@ -5,8 +5,8 @@ checkout with its venv, as the other *_reference.py scripts here:
     cd ../scanner-server && venv/bin/python ../mtg-scanner-android/app/src/test/resources/reading_reference.py
 
 What it writes (never edit these by hand - run this again):
-  app/src/test/resources/reading_decision_cases.json, reading_regression_cases.json, reading_finish_cases.json
-        COPIES of the server's tests/data files: the same cases its Python tests pass (decide_printing, decide_finish)
+  app/src/test/resources/reading_decision_cases.json, reading_regression_cases.json, reading_finish_cases.json, reading_guard_cases.json
+        COPIES of the server's tests/data files: the same cases its Python tests pass (decide_printing, decide_finish, accept_printing / confirm_by_ocr)
   app/src/test/resources/foil_math_reference.json
         the foil network's arithmetic (JVM tests): a crop as the network's input, the softmax of its outputs
   app/src/test/resources/fingerprint_reference.json
@@ -40,7 +40,7 @@ RESOURCES = ANDROID / 'app/src/test/resources'
 PARITY = ANDROID / 'app/src/androidTest/assets/parity'
 
 # ---- the shared case files: copies
-for name in ('reading_decision_cases.json', 'reading_regression_cases.json', 'reading_finish_cases.json'):
+for name in ('reading_decision_cases.json', 'reading_regression_cases.json', 'reading_finish_cases.json', 'reading_guard_cases.json'):
     shutil.copyfile(SERVER / 'tests/data' / name, RESOURCES / name)
 
 # ---- the fingerprint's arithmetic

@@ -11,16 +11,16 @@ package com.cardscanner.reading
  * reading_finish_cases.json, reading_regression_cases.json - copies made by reading_reference.py).
  *
  * NOT USED BY THE APP YET. Nothing calls it: the phone reads cards with the vision AI (standalone) or
- * sends them to the server (client mode). Wiring it in needs the image index on the phone, and the
- * guards the server puts around a decision by the picture alone are NOT in this file either - they
- * belong to the code that gathers the evidence, and must come along when it is written:
- *   - the best match must be at least 0.5 similar (PrintingCheck.IMAGE_MIN_SIMILARITY),
- *   - the collector line must not name a printing the card data has and the index lacks
- *     (PrintingCheck._names_unindexed),
- *   - a card only the picture decided is NOT added unless the person turned that on
- *     (reading.accept_image_alone, off by default).
- * Without them a printing newer than the index is added as another printing (36% of the pictures
- * whose printing was not indexed, in the server's simulation).
+ * sends them to the server (client mode). Wiring it in needs the image index on the phone.
+ *
+ * The guards the server puts around a decision ARE here (since the server's step 5 of
+ * docs/plans/READING_REVIEW_2026-10-21_PLAN.md): [acceptPrinting] and [confirmByOcr], ports of
+ * decide.accept_printing / confirm_by_ocr, passing reading_guard_cases.json. What they need - whether the
+ * index covers the card data, what the strip's line names, what the full-card OCR read - must still be
+ * GATHERED by the code that will call them (the server's PrintingCheck.live_read / ocr_facts): without
+ * the guards a printing newer than the index is added as another printing (36% of the pictures whose
+ * printing was not indexed, in the server's simulation). On the server the picture alone is allowed by
+ * default since 2026-10-20 (reading.accept_image_alone), behind those guards.
  */
 object Decide {
     /** A printing counts as "looking like the picture as much as the best match" when it is less than this below it */
@@ -31,6 +31,44 @@ object Decide {
 
     /** How sure the foil network must be, one way or the other, to be believed */
     const val FINISH_SURE = 0.9
+
+    /** The guards' floors: a decision by the picture alone, and one the strip confirmed, must look at least this much like their printing */
+    const val IMAGE_MIN_SIMILARITY = 0.5
+    const val STRONG_MIN_SIMILARITY = 0.30
+
+    /** The guards' names, as the server's reading log writes them (decide.GUARDS), in the order they are met */
+    const val IMAGE_ALONE_OFF = "image_alone_off"
+    const val INDEX_INCOMPLETE = "index_incomplete"
+    const val CARD_NOT_IN_DATA = "card_not_in_data"
+    const val BELOW_IMAGE_FLOOR = "below_image_floor"
+    const val BELOW_STRONG_FLOOR = "below_strong_floor"
+    const val STRIP_NAMES_UNINDEXED = "strip_names_unindexed"
+    const val STRIP_NAMES_UNKNOWN = "strip_names_unknown"
+    const val OCR_DID_NOT_CONFIRM = "ocr_did_not_confirm"
+    val GUARDS = listOf(IMAGE_ALONE_OFF, INDEX_INCOMPLETE, CARD_NOT_IN_DATA, BELOW_IMAGE_FLOOR, BELOW_STRONG_FLOOR, STRIP_NAMES_UNINDEXED,
+        STRIP_NAMES_UNKNOWN, OCR_DID_NOT_CONFIRM)
+
+    /**
+     * What the caller gathered about a decision, for [acceptPrinting]. [indexCovers]: the index has every printing of the card data (null: cannot be said - not a yes).
+     * [stripNames]: what the strip's whole line names - null (no whole line), "chosen", "indexed_other", "unindexed" (the card data has it, the index does not),
+     * "unknown" (the card data lacks it), "lookup_failed". [ocrOn]: the full-card OCR can be asked.
+     */
+    data class Facts(
+        val acceptImageAlone: Boolean,
+        val indexCovers: Boolean?,
+        val inData: Boolean,
+        val stripNames: String? = null,
+        val ocrOn: Boolean = false,
+    )
+
+    /** [needsOcr]: a decision by the picture alone that passed every guard with OCR on - [confirmByOcr] decides it */
+    data class Acceptance(val accepted: Boolean, val refused: String?, val needsOcr: Boolean = false)
+
+    /**
+     * What the full-card OCR read about the printing the picture alone chose: [nameMatches] (false when it read nothing), [lineNames] - what its whole collector line
+     * names: null, "chosen", "other_card" (another card's printing: no evidence), "same_card" (another printing of the same card), "unknown", "lookup_failed"
+     */
+    data class OcrFacts(val nameMatches: Boolean, val lineNames: String? = null)
 
     /** One of the printings the picture looks like (nearest first in a list): what the card data says of it */
     data class Candidate(
@@ -132,5 +170,45 @@ object Decide {
             if (net <= 1 - sure) return FinishDecision("regular", "network")     // 1 - 0.9 is 0.09999999999999998: as in Python
         }
         return FinishDecision("unknown", "none")
+    }
+
+    /**
+     * May the decision ([printing]'s answer) be added on the evidence of the picture and the strip? decide.accept_printing, in the same order:
+     *  1. "review" is no decision (not accepted, refused null);
+     *  2. the picture alone needs [Facts.acceptImageAlone] (else image_alone_off) and an index that covers the card data (else index_incomplete);
+     *  3. the printing must be in the card data (card_not_in_data);
+     *  4. its similarity must reach its path's floor (below_image_floor / below_strong_floor; equality passes);
+     *  5. the picture alone: a strip naming a printing the index lacks, or one that could not be looked up -> strip_names_unindexed; one the card data lacks -> strip_names_unknown.
+     * A decision by the picture alone that passes, with OCR on, is not accepted yet: needsOcr, and [confirmByOcr] decides.
+     */
+    fun acceptPrinting(
+        decision: PrintingDecision,
+        facts: Facts,
+        imageMinSimilarity: Double = IMAGE_MIN_SIMILARITY,
+        strongMinSimilarity: Double = STRONG_MIN_SIMILARITY,
+    ): Acceptance {
+        if (decision.path != "strong" && decision.path != "image") return Acceptance(false, null)
+        val alone = decision.path == "image"
+        if (alone && !facts.acceptImageAlone) return Acceptance(false, IMAGE_ALONE_OFF)
+        if (alone && facts.indexCovers != true) return Acceptance(false, INDEX_INCOMPLETE)
+        if (!facts.inData) return Acceptance(false, CARD_NOT_IN_DATA)
+        val similarity = decision.similarity ?: return Acceptance(false, if (alone) BELOW_IMAGE_FLOOR else BELOW_STRONG_FLOOR)
+        if (similarity < (if (alone) imageMinSimilarity else strongMinSimilarity)) {
+            return Acceptance(false, if (alone) BELOW_IMAGE_FLOOR else BELOW_STRONG_FLOOR)
+        }
+        if (alone) {
+            when (facts.stripNames) {
+                "unindexed", "lookup_failed" -> return Acceptance(false, STRIP_NAMES_UNINDEXED)
+                "unknown" -> return Acceptance(false, STRIP_NAMES_UNKNOWN)
+            }
+        }
+        val needsOcr = alone && facts.ocrOn
+        return Acceptance(!needsOcr, null, needsOcr)
+    }
+
+    /** decide.confirm_by_ocr: the name must match, and a line naming another printing of the same card, an unknown one or one that cannot be looked up refuses. null: nothing read */
+    fun confirmByOcr(ocr: OcrFacts?): Acceptance {
+        if (ocr != null && ocr.nameMatches && ocr.lineNames in listOf(null, "chosen", "other_card")) return Acceptance(true, null)
+        return Acceptance(false, OCR_DID_NOT_CONFIRM)
     }
 }
