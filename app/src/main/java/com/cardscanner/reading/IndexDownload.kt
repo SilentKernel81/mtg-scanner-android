@@ -17,10 +17,13 @@ import java.security.MessageDigest
  *  - a file is fetched into `<name>.part`, resumed with a Range when the part is there (an interrupted download goes on where it stopped), and kept only
  *    when its SHA-256 is the listed one;
  *  - a new index is PUBLISHED by one rename of manifest.json, written last, naming the new files - a reader sees the old index or the new one, never a
- *    mix; the files the new manifest does not name are deleted after.
+ *    mix; the files the new manifest does not name are deleted after. It is published only once it LOADS (ImageIndex.open of the candidate manifest:
+ *    the checksums say the bytes arrived as sent, not that they hold together - a count that does not match, another hash size, a table of other
+ *    columns): a download that does not load leaves the index that worked in place, and its own files are removed (a Codex review of 2026-10-21).
  * [ImageIndex.DESCRIPTOR] must be the server's descriptor, or nothing is downloaded (another fingerprint: every distance would be wrong).
  */
 class IndexDownload(private val http: OkHttpClient, serverUrl: String, private val token: String, private val folder: File) {
+    private companion object { const val CANDIDATE = "manifest.json.new" }
     private val base = ScannerServer.normalize(serverUrl)
 
     /** Progress: what is being fetched, and the bytes done of all the files' bytes */
@@ -55,6 +58,12 @@ class IndexDownload(private val http: OkHttpClient, serverUrl: String, private v
             return Listing(json)
         }
     }
+
+    /** The files the PUBLISHED manifest names (none without one) */
+    private fun publishedNames(): Set<String> = try {
+        val m = JSONObject(File(folder, ImageIndex.MANIFEST).readText())
+        setOfNotNull(m.optString("hashes").ifEmpty { null }, m.optString("ids").ifEmpty { null }, m.optString("printings").ifEmpty { null })
+    } catch (e: Exception) { emptySet() }
 
     /** Thrown when the server answers 409: the listing is out of date */
     private class Stale : IOException("the index changed on the server")
@@ -133,11 +142,16 @@ class IndexDownload(private val http: OkHttpClient, serverUrl: String, private v
             .put("hash_bytes", listing.json.getInt("hash_bytes")).put("built", listing.json.optString("built"))
             .put("generation", g).put("hashes", names["hashes"]).put("ids", names["ids"]).put("printings", names["printings"])
             .put("hashes_sha256", hashes.getString("sha256")).put("ids_sha256", ids.getString("sha256"))
-        val opened = File(folder, ImageIndex.MANIFEST + ".new").also { it.writeText(manifest.toString()) }
-        // checked before it is published: what the app will load must load
-        val check = File(folder, ImageIndex.MANIFEST)
-        if (!opened.renameTo(check)) throw IOException("Could not publish the index")
-        ImageIndex.open(folder).why?.let { throw IOException("The downloaded index does not load: $it") }
+        val candidate = File(folder, CANDIDATE).also { it.writeText(manifest.toString()) }
+        // Checked BEFORE it is published: what the app will load must load. Not loading, the published manifest (the index that works, or none) stays, and
+        // the files only the candidate names go - never one the published manifest names
+        ImageIndex.open(folder, CANDIDATE).why?.let { why ->
+            candidate.delete()
+            val kept = publishedNames()
+            names.values.filter { it !in kept }.forEach { File(folder, it).delete() }
+            throw IOException("The downloaded index does not load ($why) - the index you had is kept")
+        }
+        if (!candidate.renameTo(File(folder, ImageIndex.MANIFEST))) throw IOException("Could not publish the index")
         // what the new manifest does not name goes (an older generation, a part left over)
         folder.listFiles()?.filter { it.name != ImageIndex.MANIFEST && it.name !in names.values }?.forEach { it.delete() }
         return g

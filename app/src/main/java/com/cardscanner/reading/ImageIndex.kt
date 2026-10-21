@@ -94,9 +94,13 @@ class ImageIndex private constructor(
         /** [index] or, when there is none, [why] (for Settings: "no index", "the checksum of ... does not hold", ...) */
         data class Opened(val index: ImageIndex?, val why: String?)
 
-        fun open(folder: File): Opened {
+        /**
+         * [manifest]: the manifest file to read - [MANIFEST], the published one, or a candidate a download checks BEFORE it is published (IndexDownload: a
+         * download that does not load must leave the index that works in place)
+         */
+        fun open(folder: File, manifest: String = MANIFEST): Opened {
             fun no(why: String) = Opened(null, why)
-            val manifestFile = File(folder, MANIFEST)
+            val manifestFile = File(folder, manifest)
             if (!manifestFile.isFile) return no("no picture index downloaded")
             return try {
                 val manifest = JSONObject(manifestFile.readText())
