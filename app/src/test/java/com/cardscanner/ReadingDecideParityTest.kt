@@ -161,7 +161,8 @@ class ReadingDecideParityTest {
                 )
             } else {
                 val o = case.optJSONObject("ocr")
-                Decide.confirmByOcr(o?.let { Decide.OcrFacts(it.getBoolean("name_matches"), optString(it, "line_names")) })
+                Decide.confirmByOcr(o?.let { Decide.OcrFacts(it.getBoolean("name_matches"), optString(it, "line_names"), it.optBoolean("name_of_other_line", false), optString(it, "strip_names")) },
+                    if (case.isNull("lead")) null else case.getDouble("lead"))
             }
             val want = Decide.Acceptance(expected.getBoolean("accepted"), optString(expected, "refused"), expected.optBoolean("needs_ocr", false))
             assertEquals(case.getString("name"), want, got)
@@ -174,5 +175,6 @@ class ReadingDecideParityTest {
     fun theGuardFloorsAreTheServers() {
         assertEquals(0.5, Decide.IMAGE_MIN_SIMILARITY, 0.0)
         assertEquals(0.30, Decide.STRONG_MIN_SIMILARITY, 0.0)
+        assertEquals(0.10, Decide.LEAD_WAIVES_NAME, 0.0)
     }
 }

@@ -36,6 +36,12 @@ object Decide {
     const val IMAGE_MIN_SIMILARITY = 0.5
     const val STRONG_MIN_SIMILARITY = 0.30
 
+    /**
+     * How far ahead of the second printing the picture's best match must be for the full-card OCR's NAME to be no longer needed (decide.LEAD_WAIVES_NAME on the
+     * server, measured there: with every printing of a card missing from the index, the best match never led by more than 0.052 - 0 of 428 added as another card at 0.08)
+     */
+    const val LEAD_WAIVES_NAME = 0.10
+
     /** The guards' names, as the server's reading log writes them (decide.GUARDS), in the order they are met */
     const val IMAGE_ALONE_OFF = "image_alone_off"
     const val INDEX_INCOMPLETE = "index_incomplete"
@@ -66,9 +72,11 @@ object Decide {
 
     /**
      * What the full-card OCR read about the printing the picture alone chose: [nameMatches] (false when it read nothing), [lineNames] - what its whole collector line
-     * names: null, "chosen", "other_card" (another card's printing: no evidence), "same_card" (another printing of the same card), "unknown", "lookup_failed"
+     * names: null, "chosen", "other_card" (another card's printing: no evidence), "same_card" (another printing of the same card), "unknown", "lookup_failed";
+     * [nameOfOtherLine]: the name read is not the chosen card's but IS the card a whole collector line names (the OCR's own line or the strip's - gathered by the caller);
+     * [stripNames]: what the STRIP's whole line names, the same values as [lineNames] (also gathered when the OCR read nothing)
      */
-    data class OcrFacts(val nameMatches: Boolean, val lineNames: String? = null)
+    data class OcrFacts(val nameMatches: Boolean, val lineNames: String? = null, val nameOfOtherLine: Boolean = false, val stripNames: String? = null)
 
     /** One of the printings the picture looks like (nearest first in a list): what the card data says of it */
     data class Candidate(
@@ -206,9 +214,19 @@ object Decide {
         return Acceptance(!needsOcr, null, needsOcr)
     }
 
-    /** decide.confirm_by_ocr: the name must match, and a line naming another printing of the same card, an unknown one or one that cannot be looked up refuses. null: nothing read */
-    fun confirmByOcr(ocr: OcrFacts?): Acceptance {
-        if (ocr != null && ocr.nameMatches && ocr.lineNames in listOf(null, "chosen", "other_card")) return Acceptance(true, null)
+    /**
+     * decide.confirm_by_ocr. The name must match - unless the picture leads the second printing by at least [leadWaivesName] ([lead]: the decision's lead, null when
+     * not given), or the whole collector line read names EXACTLY the chosen printing ("chosen": the picture and the line agree on it). Either way a line naming another
+     * printing of the same card, an unknown one or one that cannot be looked up refuses: the lead says which card, never which printing. And a name that is ANOTHER
+     * card's which a whole line names too ([OcrFacts.nameOfOtherLine]) refuses whatever the lead: two readings agree on a different card; and so does a strip naming
+     * another printing of the same card ([OcrFacts.stripNames] "same_card"), whatever the name and the lead. [ocr] null: nothing read.
+     */
+    fun confirmByOcr(ocr: OcrFacts?, lead: Double? = null, leadWaivesName: Double = LEAD_WAIVES_NAME): Acceptance {
+        val line = ocr?.lineNames
+        if (ocr?.stripNames == "same_card") return Acceptance(false, OCR_DID_NOT_CONFIRM)
+        if (ocr != null && !ocr.nameMatches && ocr.nameOfOtherLine) return Acceptance(false, OCR_DID_NOT_CONFIRM)
+        val nameOk = (ocr?.nameMatches == true) || (lead != null && lead >= leadWaivesName) || line == "chosen"
+        if (nameOk && line in listOf(null, "chosen", "other_card")) return Acceptance(true, null)
         return Acceptance(false, OCR_DID_NOT_CONFIRM)
     }
 }
