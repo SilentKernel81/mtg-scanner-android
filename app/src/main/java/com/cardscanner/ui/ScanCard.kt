@@ -58,8 +58,8 @@ internal fun ScanCard(viewModel: ScannerViewModel, scan: ScanResult, compact: Bo
                     scan.deleting -> "Removing from server…"
                     scan.status == ScanResult.Status.IDENTIFYING -> scan.note ?: "Identifying…"
                     scan.undone -> "Taken back"
-                    server?.status == ServerOutcome.Status.ADDED -> "Added on the server"
-                    server?.status == ServerOutcome.Status.REVIEW -> "Sent to server review"
+                    // Who read it and, for a review, why: how the server's reading (OCR, picture + collector line, AI) is told apart
+                    server?.status == ServerOutcome.Status.ADDED || server?.status == ServerOutcome.Status.REVIEW -> server.statusLine ?: "Sent to the server"
                     scan.inventoryId != null -> "Added to inventory"
                     scan.pendingAdd -> "Waiting for Add"
                     scan.reviewId != null -> "Sent to review"

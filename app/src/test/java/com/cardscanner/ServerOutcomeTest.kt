@@ -24,6 +24,24 @@ class ServerOutcomeTest {
     }
 
     @Test
+    fun theLineUnderACardSaysWhoReadItAndWhyNot() {
+        fun line(json: String) = ServerOutcome.parse(JSONObject(json)).statusLine
+        val card = """"card":{"finish":"Regular","name":"X","number":"1","set":"S"}"""
+        // the full-card OCR, the picture and the collector line (evidence mode), a vision AI
+        assertEquals("Added on the server · OCR", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"light-ocr"}}"""))
+        assertEquals("Added on the server · picture + collector line", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"picture+strip"}}"""))
+        assertEquals("Added on the server · AI (local/qwen3.5:9b-q8_0)", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"local/qwen3.5:9b-q8_0"}}"""))
+        // an answer without a reader (an older server, or none said) adds nothing
+        assertEquals("Added on the server", line("""{"status":"added",$card}"""))
+        // a review: the reason, and who read it when somebody did
+        assertEquals("Sent to server review · printing not confirmed · read by AI (gemini-2.5)",
+            line("""{"status":"review","reason":"printing not confirmed","read":{"name":"X","reader":"gemini-2.5"}}"""))
+        assertEquals("Sent to server review · not read", line("""{"status":"review","reason":"not read","read":null}"""))
+        // nothing to say for a card still being read or an error
+        assertNull(line("""{"status":"pending","capture":2}"""))
+    }
+
+    @Test
     fun notRead() {
         val outcome = ServerOutcome.parse(JSONObject("""{"capture":3,"read":null,"reason":"not read","seconds":0.58,"status":"review","success":true}"""))
         assertEquals(ServerOutcome.Status.REVIEW, outcome.status)

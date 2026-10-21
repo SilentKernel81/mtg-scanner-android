@@ -38,6 +38,28 @@ data class ServerOutcome(
     /** ADDED to the scanned cards; REVIEW: in the server's review queue; PENDING: still being read */
     enum class Status { ADDED, REVIEW, PENDING, ERROR }
 
+    /**
+     * How the server read the card, in words for the screen: its `reader` is "light-ocr" (the full-card OCR), "picture+strip"
+     * (reading.mode "evidence": the picture's fingerprint and the collector line decided, no AI asked) or the vision AI's model
+     * ("local/qwen3.5:9b-q8_0", "gemini-..."). Null when the server did not say (a card it could not read).
+     */
+    val readerLabel: String?
+        get() = when (val r = reader?.trim().orEmpty()) {
+            "" -> null
+            "light-ocr" -> "OCR"
+            "picture+strip" -> "picture + collector line"
+            else -> "AI ($r)"
+        }
+
+    /** The line under a card of this server's: what became of it and, for the testing of the reading, who decided / why not */
+    val statusLine: String?
+        get() = when (status) {
+            Status.ADDED -> "Added on the server" + (readerLabel?.let { " · $it" } ?: "")
+            Status.REVIEW -> "Sent to server review" + (reason?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +
+                (readerLabel?.let { " · read by $it" } ?: "")
+            else -> null
+        }
+
     companion object {
         fun parse(json: JSONObject): ServerOutcome {
             val status = when (json.optString("status")) {

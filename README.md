@@ -163,6 +163,10 @@ the other way round.
   `/api/stations/<station id>/captures` with a `capture_id` (the outbox id), so a capture
   sent again after no answer is still one card on the server. The answer (`ServerOutcome`) is
   *added*, *review*, or *pending* - then `outcome()` asks again every 2 s.
+  Each row says who read the card and, for a review, why (`ServerOutcome.statusLine`: *OCR*,
+  *picture + collector line* - the server's `reading.mode: evidence`, no AI asked - or *AI (model)*), which is
+  how the server's reading is told apart from the phone. The phone sends the flat warped card as
+  `foil_image` (or marks `image` as that card), which is the picture the server fingerprints.
   Remove calls `DELETE /api/stations/<id>/captures/<number>/sync`: precisely that captured
   copy leaves the server's scanned cards/review queue before its phone row disappears.
   Remove all snapshots the phone's visible history, so new captures are kept. A failed removal
