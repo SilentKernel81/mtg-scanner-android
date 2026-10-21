@@ -20,6 +20,11 @@ data class AppSettings(
      */
     val pictureFirst: Boolean = true,
     /**
+     * Standalone, with the picture first: read the card's collector line with OCR (reading/TextReader.kt, light-ocr's networks on the phone) - its set and
+     * number confirm the printing the picture agrees with, its star / dot gives the finish. On by default (2026-10-21); off: the picture alone, as before
+     */
+    val readCollectorLine: Boolean = true,
+    /**
      * Standalone: ask the vision AI at all. Off: what the picture does not settle goes to the review queue (no AI request - no key, no network for reading),
      * and the foil check is not asked either. Every place that asks the AI asks [askAi]
      */

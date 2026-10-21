@@ -183,7 +183,29 @@ internal class CaptureProcessor(
 
     /** What the picture said of a capture: the printing to add (accepted by the guards), or only its best guess (for review), and why not; the marker the
      * foil network read at the fixed place (Foil.UNKNOWN: not asked, or not sure) */
-    private class ByPicture(val printing: Printing?, val guess: Printing?, val why: String?, val marker: Foil = Foil.UNKNOWN)
+    private class ByPicture(val printing: Printing?, val guess: Printing?, val why: String?, val marker: Foil = Foil.UNKNOWN,
+                            /** CaptureProcessor.PICTURE_READER, or STRIP_READER when the collector line the OCR read named the printing ("strong") */
+                            val reader: String = PICTURE_READER)
+
+    // The OCR reader (assets/ocr: light-ocr's networks, reading/TextReader.kt), loaded at the first card that reads its collector line - null when it
+    // cannot be read (the picture reads as without OCR). ~30 MB of networks: loaded only when the setting asks for it
+    private val textReader by lazy { com.cardscanner.reading.TextReader.load(appContext) }
+
+    /**
+     * What the card data has at the set and number the strip's OCR read (PrintingCheck._strip_printing: database.get_card_by_set_number with its number
+     * variants - "0330" may be "330", "0330", "330s", "0330s")
+     */
+    private fun stripPrinting(data: CardDatabase, set: String, number: String): PictureReader.StripPrinting = try {
+        val digits = Regex("\\d+").find(number)?.value
+        if (digits == null) PictureReader.StripPrinting.NotFound
+        else {
+            val base = digits.trimStart('0').ifEmpty { "0" }
+            data.bySetNumber(set, listOf(base, digits, base + "s", digits + "s").distinct())?.let { PictureReader.StripPrinting.Found(it.id) }
+                ?: PictureReader.StripPrinting.NotFound
+        }
+    } catch (e: Exception) {
+        PictureReader.StripPrinting.Failed
+    }
 
     // The foil network (assets/foil_net.onnx), loaded at the first card the picture decides - null when it cannot be read (the finish is then decided as before)
     private val appContext = context.applicationContext
@@ -201,7 +223,10 @@ internal class CaptureProcessor(
         val mat = Mat()
         return try {
             Utils.bitmapToMat(foilCard, mat)                  // RGBA: Fingerprint.hash drops the alpha
-            val reading = reader.read(mat, acceptImageAlone = true, indexCovers = pictureIndex.covers(), inData = { data.byId(it) != null }, foilNet = foilNet)
+            // the collector line read by OCR (Settings: Read the collector line) - the strip of the card: rule A2's "strong" decision, the star / dot for the finish
+            val ocr = if (settings().readCollectorLine) textReader else null
+            val reading = reader.read(mat, acceptImageAlone = true, indexCovers = pictureIndex.covers(), inData = { data.byId(it) != null }, foilNet = foilNet,
+                textReader = ocr, stripPrinting = { set, number -> stripPrinting(data, set, number) })
             val accepted = reading.printingId?.let { data.byId(it) }?.copy(match = "picture")
             val guess = reading.search.candidates.firstOrNull()?.let { data.byId(it.id) }
             val why = when {
@@ -212,15 +237,17 @@ internal class CaptureProcessor(
             Log.i(TAG, "Picture: ${reading.decision.path} ${accepted?.let { "${it.name} ${it.setCode} #${it.collectorNumber}" } ?: "-"} " +
                 "(similarity ${reading.decision.similarity?.let { "%.3f".format(it) }}, lead ${reading.decision.lead?.let { "%.3f".format(it) }}" +
                 (why?.let { ", $it" } ?: "") + ")")
-            // the marker as the network read it - only when the finish came from it (the printing's own finishes, when they decide, are FinishPolicy's)
+            reading.strip?.let { Log.i(TAG, "Collector line: ${it.set} ${it.number}, symbol ${it.symbol}${it.net?.let { n -> ", network %.3f".format(n) } ?: ""}") }
+            // the marker as the OCR read it (symbol) or the network (at the OCR's box, or at the fixed place without OCR) - only when the finish came from one of
+            // them (the printing's own finishes, when they decide, are FinishPolicy's)
             val marker = when {
-                reading.finish?.source != "network" -> Foil.UNKNOWN
+                reading.finish?.source != "network" && reading.finish?.source != "symbol" -> Foil.UNKNOWN
                 reading.finish.finish == "foil" -> Foil.FOIL
                 reading.finish.finish == "regular" -> Foil.NON_FOIL
                 else -> Foil.UNKNOWN
             }
-            if (reading.net != null) Log.i(TAG, "Foil network at the fixed place: %.3f -> ${reading.finish?.finish}".format(reading.net))
-            ByPicture(accepted, guess, why, marker)
+            if (reading.net != null) Log.i(TAG, "Foil network: %.3f -> ${reading.finish?.finish}".format(reading.net))
+            ByPicture(accepted, guess, why, marker, if (reading.decision.path == "strong") STRIP_READER else PICTURE_READER)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {          // anything - an Error too (out of memory, a native library): the card is read as before, never lost to this
@@ -368,7 +395,7 @@ internal class CaptureProcessor(
             }
             val (foil, reason) = FinishPolicy.suggest(printing, pictureMarker)
             val result = ScanResult(id, thumbnail, ScanResult.Status.DONE, read, printing, foil, reason,
-                seconds = (System.nanoTime() - start) / 1e9, reader = PICTURE_READER)
+                seconds = (System.nanoTime() - start) / 1e9, reader = picture.reader)
             Log.i(TAG, "Identified #$id by the picture: ${printing.name} ${printing.setCode} #${printing.collectorNumber} foil=$foil in %.2f s".format(result.seconds))
             collection.settleCapture(id, card, read, pictureMarker, result, captureId, settings, reviewOnly)
             return true
@@ -579,5 +606,7 @@ internal class CaptureProcessor(
         private const val TAG = "Scanner"
         /** The reader of a card the picture decided (ScanResult.reader; the server's PICTURE_READER, "picture") */
         const val PICTURE_READER = "picture"
+        /** ... and when the collector line the OCR read named the printing the picture agrees with (the server's EVIDENCE_READER, "picture+strip") */
+        const val STRIP_READER = "picture+strip"
     }
 }

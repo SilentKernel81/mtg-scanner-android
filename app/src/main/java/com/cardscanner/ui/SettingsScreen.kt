@@ -322,6 +322,14 @@ private fun ReadingSection(viewModel: ScannerViewModel) {
         }
         Switch(settings.pictureFirst, { viewModel.updateSettings(settings.copy(pictureFirst = it)) })
     }
+    if (settings.pictureFirst) Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Read the collector line (OCR)")
+            Text("Reads the set, number and ★/• at the bottom left, on the phone: confirms the printing and gives the foil. About 0.3 s a card.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(settings.readCollectorLine, { viewModel.updateSettings(settings.copy(readCollectorLine = it)) })
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("Ask the vision AI")

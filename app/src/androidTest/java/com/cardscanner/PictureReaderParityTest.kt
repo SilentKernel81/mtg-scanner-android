@@ -134,6 +134,73 @@ class PictureReaderParityTest {
         assertTrue("${flipped.size} of ${cases.length()} pictures read differently from the server:\n${flipped.joinToString("\n")}", flipped.isEmpty())
     }
 
+    /**
+     * The same captures WITH the strip read by the phone's OCR reader (TextReader: a port of the server's reference of light-ocr) - the server's live_read
+     * with that reference as its reader (picture_reference.py: with_strip): the strip's evidence (number, set, symbol, the foil network at the OCR's box),
+     * rule A2's path and printing, what the strip's line names, the guards' answer and the finish. The printing at the strip's set and number is the one
+     * the server's card data has (the reference records it per capture).
+     *
+     * The DECISIONS must be the server's on every capture. The strip's symbol (and so the finish) may differ on at most [STRIP_PIXEL_DIFFERENCES] of the 41,
+     * for a measured reason: these pictures are HALVED captures (assets: 46 MB, not 100), so the strip is enlarged (foil_marker.strip_of, INTER_CUBIC), and
+     * OpenCV's cubic resize is not bit-exact across CPUs - on the Pixel 10 the strip of 1041 and of 110 differs from the desktop's by 1 on 10% of its pixels
+     * (dumped and compared, 2026-10-21), enough to flip a star or a dot a few pixels wide. A real capture (~1000 x 1400) is never enlarged.
+     */
+    @Test fun withTheStripThePhoneDecidesAsTheServer() {
+        val reference = JSONObject(asset("reference.json").use { String(it.readBytes()) })
+        val reader = PictureReader(index())
+        val textReader = com.cardscanner.reading.TextReader.load(instrumentation.targetContext)
+        assertNotNull("the OCR reader did not load", textReader)
+        val foilNet = FoilNet.load(instrumentation.targetContext)
+        val cases = reference.getJSONArray("cases")
+        val problems = ArrayList<String>()
+        val stripDifferences = ArrayList<String>()
+        var strong = 0
+        var added = 0
+        var total = 0L
+        for (i in 0 until cases.length()) {
+            val case = cases.getJSONObject(i)
+            val want = case.getJSONObject("with_strip")
+            val name = case.getString("picture")
+            val printing = when {
+                want.isNull("strip_printing") -> PictureReader.StripPrinting.NotFound      // no whole line: not asked
+                want.getString("strip_printing") == "lookup_failed" -> PictureReader.StripPrinting.Failed
+                want.getString("strip_printing").isEmpty() -> PictureReader.StripPrinting.NotFound
+                else -> PictureReader.StripPrinting.Found(want.getString("strip_printing"))
+            }
+            val picture = rgba(name)
+            val started = System.nanoTime()
+            val reading = reader.read(picture, acceptImageAlone = true, indexCovers = true, inData = { true }, foilNet = foilNet,
+                textReader = textReader, stripPrinting = { _, _ -> printing })
+            total += (System.nanoTime() - started) / 1_000_000
+            picture.release()
+            val s = want.getJSONObject("strip")
+            val wantStrip = listOf(s.getString("number"), s.getString("set"), s.getString("symbol"))
+            val gotStrip = listOf(reading.strip?.number, reading.strip?.set, reading.strip?.symbol)
+            val stripDiffers = wantStrip != gotStrip
+            val wantNet = if (s.isNull("net")) null else s.getDouble("net")
+            val gotNet = reading.strip?.net
+            val netDiffers = (wantNet == null) != (gotNet == null) || (wantNet != null && kotlin.math.abs(wantNet - gotNet!!) > NET_TOLERANCE)
+            val d = want.getJSONObject("decision")
+            val wantDecision = listOf(d.getString("path"), d.optString("printing_id").takeIf { !d.isNull("printing_id") },
+                want.optString("strip_names").takeIf { !want.isNull("strip_names") }, want.getBoolean("accepted").toString(),
+                want.optString("refused").takeIf { !want.isNull("refused") })
+            val gotDecision = listOf(reading.decision.path, reading.decision.printingId, reading.stripNames, reading.acceptance.accepted.toString(), reading.acceptance.refused)
+            if (wantDecision != gotDecision) problems += "$name: decision $gotDecision, the server $wantDecision"
+            val wantFinish = want.optJSONObject("finish")?.let { it.getString("finish") to it.getString("source") }
+            val gotFinish = reading.finish?.let { it.finish to it.source }
+            if (stripDiffers || netDiffers || wantFinish != gotFinish) {
+                stripDifferences += "$name: strip $gotStrip (net $gotNet) finish $gotFinish; the server $wantStrip (net $wantNet) finish $wantFinish"
+            }
+            if (reading.decision.path == "strong") strong++
+            if (reading.printingId != null) added++
+        }
+        android.util.Log.i("Scanner", "PictureReaderParityTest with the strip: $added of ${cases.length()} added ($strong strong), ${total / cases.length()} ms a card on average; " +
+            "${stripDifferences.size} strip reads differ (cubic enlargement):\n${stripDifferences.joinToString("\n")}")
+        assertTrue("${stripDifferences.size} strip reads differ from the server (at most $STRIP_PIXEL_DIFFERENCES):\n${stripDifferences.joinToString("\n")}",
+            stripDifferences.size <= STRIP_PIXEL_DIFFERENCES)
+        assertTrue("${problems.size} differences from the server:\n${problems.joinToString("\n")}", problems.isEmpty())
+    }
+
     @Test fun anIndexThatDoesNotHoldTogetherIsNoIndex() {
         val folder = File(instrumentation.targetContext.cacheDir, "picture_index_broken")
         copyIndex(folder)
@@ -150,5 +217,7 @@ class PictureReaderParityTest {
         const val SIMILARITY_TOLERANCE = 2.0 * 8 / 768
         /** The foil network's probability: FoilNetParityTest finds 5e-8 on fixed crops; a crop cut here may differ by a pixel's rounding */
         const val NET_TOLERANCE = 0.01
+        /** Strip reads allowed to differ on the halved pictures (cubic enlargement, not bit-exact across CPUs: see withTheStripThePhoneDecidesAsTheServer) */
+        const val STRIP_PIXEL_DIFFERENCES = 3
     }
 }

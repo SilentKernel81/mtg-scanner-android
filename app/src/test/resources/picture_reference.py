@@ -35,7 +35,9 @@ sys.path.insert(0, str(SERVER / 'src'))
 from card_scanner.config import Config  # noqa: E402
 from card_scanner.core import foil_marker, image_index, printing_check  # noqa: E402
 from card_scanner.core.database import CardDatabase  # noqa: E402
-from card_scanner.core.reading.decide import accept_printing, decide_printing  # noqa: E402
+from card_scanner.core.reading.decide import accept_printing, decide_finish, decide_printing  # noqa: E402
+sys.path.insert(0, str(SERVER / 'scripts/experiments/ocr_port'))
+import ppocr_reference  # noqa: E402
 
 OUT = ANDROID / 'app/src/androidTest/assets/picture'
 CAPTURES = Path.home() / '.cache/mtg-image-match/truth/rescan_cards'
@@ -57,6 +59,31 @@ ids = (INDEX / manifest['ids']).read_text().split()
 
 # --- the server's reading of each picture, OCR off ---
 check = printing_check.PrintingCheck(database, INDEX, Path('/nonexistent/printing_check.jsonl'), 'off', 'off')
+# The strip read by the OCR - the phone's TextReader is a port of this reference of light-ocr (its parity test: the same texts), so the phone's strip must be
+# THIS strip (since 2026-10-21: the phone reads the strip)
+strip_reader = ppocr_reference.Reader()
+
+
+def with_strip(rgb, search, picture, cards):
+    """live_read WITH the strip read by the OCR reference (and the foil network at the OCR's box where it read no symbol): the strip's evidence, what its line
+    names (the card data's printing at that set and number - the phone is given it by the test), rule A2, the guards (the picture alone allowed, the index
+    covering the card data, OCR on but NO full-card confirmation: the phone has none yet - ocr_on is given as False so that needs_ocr does not stand in for
+    it), the finish"""
+    upright = cv2.rotate(rgb, cv2.ROTATE_180) if search['rotated'] else rgb
+    strip = printing_check.read_strip_evidence(strip_reader, upright, net)
+    decision = decide_printing(picture, {'number': strip['number'], 'set': strip['set']})
+    card = cards.get(decision['printing_id']) if decision['printing_id'] is not None else None
+    named = check._strip_printing(strip)
+    line = None if named is printing_check.NO_LINE else 'lookup_failed' if named is printing_check.LOOKUP_FAILED else (named['id'] if named else '')
+    alone = decision['path'] == 'image'
+    facts = {'accept_image_alone': True, 'index_covers': True, 'in_data': bool(card), 'ocr_on': False,
+             'strip_names': check._strip_names(search['index'], strip, decision['printing_id']) if alone and card else None}
+    verdict = accept_printing(decision, facts, {'image_min_similarity': printing_check.IMAGE_MIN_SIMILARITY,
+                                                'strong_min_similarity': printing_check.STRONG_MIN_SIMILARITY})
+    return {'strip': strip, 'strip_printing': line,              # None: no whole line; '': the card data has none; an id; 'lookup_failed'
+            'decision': {'path': decision['path'], 'printing_id': decision['printing_id']},
+            'strip_names': facts['strip_names'], 'accepted': bool(verdict['accepted']), 'refused': verdict['refused'],
+            'finish': decide_finish(card.get('finishes'), strip['symbol'], strip['net']) if verdict['accepted'] and card else None}
 net = foil_marker.load()
 assert net is not None, 'the foil network (core/foil_net.onnx) did not load'
 cases = []
@@ -95,6 +122,7 @@ for path in sorted(CAPTURES.glob('*.jpg')):
         'net': probability,                                              # computed for every picture; the server ASKS it only where marker_expected
         'finishes': list((card or {}).get('finishes') or []),
         'finish': live['finish'] if live else None,                      # decide_finish's answer: {'finish', 'source'}
+        'with_strip': with_strip(rgb, search, picture, cards),
     })
 reference = {'_note': 'Made by picture_reference.py from the server\'s code - never edit by hand. OCR off: no strip, the picture alone allowed, the index '
                       'covering the card data.', 'generation': manifest['generation'], 'descriptor': manifest['descriptor'],

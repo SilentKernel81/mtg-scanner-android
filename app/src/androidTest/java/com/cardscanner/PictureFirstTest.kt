@@ -69,7 +69,8 @@ class PictureFirstTest {
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
                 super.getSharedPreferences("${root.name}.$name", mode)
         }
-        AppSettings(pictureFirst = true, aiEnabled = false, autoAdd = true, detectFoil = true,
+        // the picture alone (no collector line): the first test; the second reads the collector line too (it saves its own settings)
+        AppSettings(pictureFirst = true, readCollectorLine = false, aiEnabled = false, autoAdd = true, detectFoil = true,
             captureSound = false, addedSound = false, reviewSound = false).save(context)
     }
 
@@ -138,6 +139,41 @@ class PictureFirstTest {
     private fun bitmap(name: String): Bitmap {
         val options = BitmapFactory.Options().apply { inScaled = false; inPreferredConfig = Bitmap.Config.ARGB_8888 }
         return asset("pictures/$name").use { BitmapFactory.decodeStream(it, null, options) }!!
+    }
+
+    /**
+     * With the collector line read by the phone's OCR (Settings: Read the collector line): a capture whose line names the printing the picture agrees with
+     * ("strong" on the server) is added with the reader "picture+strip"; one whose finish nothing read (the star / dot unread, the network not sure, the AI
+     * off) waits for review with its printing. The reference's with_strip says which capture is which.
+     */
+    @Test fun theCollectorLineConfirmsThePrintingAndAnUnreadFinishWaitsForReview() {
+        AppSettings(pictureFirst = true, readCollectorLine = true, aiEnabled = false, autoAdd = true, detectFoil = true,
+            captureSound = false, addedSound = false, reviewSound = false).save(context)
+        val cases = JSONObject(asset("reference.json").use { String(it.readBytes()) }).getJSONArray("cases").let { a -> List(a.length()) { a.getJSONObject(it) } }
+        // a strong decision with a finish the strip settles, and one accepted whose finish nothing read (skipping the two halved pictures whose strip differs)
+        val skip = setOf("phone-0240eb84_1041_1792505189.png", "phone-0240eb84_110_1792204606.png")
+        val strong = cases.first { it.getString("picture") !in skip && it.getJSONObject("with_strip").let { w ->
+            w.getBoolean("accepted") && w.getJSONObject("decision").getString("path") == "strong" && w.optJSONObject("finish")?.getString("finish") != "unknown" } }
+        val unread = cases.first { it.getString("picture") !in skip && it.getJSONObject("with_strip").let { w ->
+            w.getBoolean("accepted") && w.optJSONObject("finish")?.getString("finish") == "unknown" } }
+        installIndex()
+        installCardData(cases.flatMap { c -> c.getJSONArray("candidates").let { a -> List(a.length()) { a.getJSONObject(it).getString("id") } } }.toSet())
+        val viewModel = model()
+        await("the index to load and cover the card data") { viewModel.pictureIndexState.value.count != null && viewModel.pictureIndexState.value.missing == 0 }
+
+        val one = bitmap(strong.getString("picture"))
+        assertTrue(viewModel.identify(one, one))
+        await("the strong card to be read") { viewModel.scans.value.firstOrNull()?.status == ScanResult.Status.DONE }
+        val first = viewModel.scans.value.first()
+        assertEquals(CaptureProcessor.STRIP_READER, first.reader)
+        assertEquals(strong.getJSONObject("with_strip").getJSONObject("decision").getString("printing_id"), first.printing?.id)
+        await("the strong card to be added") { viewModel.scans.value.first().inventoryId != null }
+
+        val two = bitmap(unread.getString("picture"))
+        assertTrue(viewModel.identify(two, two))
+        await("the card with an unread finish to go to review") { viewModel.scans.value.size == 2 && viewModel.scans.value.first().reviewId != null }
+        assertNull(viewModel.scans.value.first().inventoryId)
+        assertEquals("network requests (the AI is off; the picture and the OCR need none)", 0, requests.get())
     }
 
     @Test fun thePictureAddsWhatItSettlesAndTheRestWaitsForReviewWithoutTheAi() {

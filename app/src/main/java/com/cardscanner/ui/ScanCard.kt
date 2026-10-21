@@ -97,5 +97,6 @@ internal fun ScanCard(viewModel: ScannerViewModel, scan: ScanResult, compact: Bo
 private fun readBy(reader: String?): String = when (reader) {
     null, "" -> ""
     com.cardscanner.CaptureProcessor.PICTURE_READER -> " · read by the picture"
+    com.cardscanner.CaptureProcessor.STRIP_READER -> " · read by the picture + collector line"
     else -> " · read by AI ($reader)"
 }

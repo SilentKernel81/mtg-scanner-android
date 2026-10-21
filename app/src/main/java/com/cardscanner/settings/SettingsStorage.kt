@@ -81,6 +81,7 @@ internal class SettingsStorage(
             localUrl = prefs.getString("local_url", "").orEmpty(),
             detectFoil = prefs.getBoolean("detect_foil", true),
             pictureFirst = prefs.getBoolean("picture_first", true),
+            readCollectorLine = prefs.getBoolean("read_collector_line", true),
             aiEnabled = prefs.getBoolean("ai_enabled", true),
             minSharpness = prefs.getInt("min_sharpness", 250),
             stableFrames = prefs.getInt("stable_frames", 5),
@@ -122,6 +123,7 @@ internal class SettingsStorage(
             editor.putString("local_url", settings.localUrl)
                 .putBoolean("detect_foil", settings.detectFoil)
                 .putBoolean("picture_first", settings.pictureFirst)
+                .putBoolean("read_collector_line", settings.readCollectorLine)
                 .putBoolean("ai_enabled", settings.aiEnabled)
                 .putInt("min_sharpness", settings.minSharpness)
                 .putInt("stable_frames", settings.stableFrames)

@@ -30,7 +30,7 @@ class PictureReader(private val index: ImageIndex) {
      * of a foil when it was asked (null: not asked - see [read])
      */
     data class Reading(val search: Search, val decision: Decide.PrintingDecision, val acceptance: Decide.Acceptance, val finish: Decide.FinishDecision?,
-                       val net: Double? = null) {
+                       val net: Double? = null, val strip: Decide.Strip? = null, val stripNames: String? = null) {
         /** The printing to add, or null (not accepted: the caller goes on as it did before - the AI, or review) */
         val printingId get() = decision.printingId.takeIf { acceptance.accepted }
     }
@@ -62,14 +62,37 @@ class PictureReader(private val index: ImageIndex) {
      * The card's reading. [acceptImageAlone]: the setting (Read by the picture first); [indexCovers]: the index has every printing of the phone's card data
      * (null: cannot be said - not a yes); [inData]: whether the phone's card data has a printing (by id).
      */
-    fun read(card: Mat, acceptImageAlone: Boolean, indexCovers: Boolean?, inData: (String) -> Boolean, foilNet: FoilNet? = null): Reading {
+    /** What the card data has at the strip's set and number (the caller looks it up: the phone's CardDatabase): a printing's id, none, or a failed lookup */
+    sealed interface StripPrinting {
+        data class Found(val id: String) : StripPrinting
+        data object NotFound : StripPrinting
+        data object Failed : StripPrinting
+    }
+
+    /**
+     * [textReader]: the OCR reader - given, the strip of the card turned upright is READ (the server's live_read with its OCR reader): its collector line
+     * goes to rule A2 (a "strong" decision: the line names the printing the picture agrees with), the star / dot the OCR read gives the finish, the foil
+     * network only where it read none - cut at the OCR's own box of the set line (read_strip_evidence). [stripPrinting]: what the card data has at the
+     * strip's set and number (strip_names - the guards: a line naming a printing the index lacks or the card data lacks refuses the picture alone).
+     * NOT here yet: the full-card OCR's confirmation of a decision by the picture alone (the server's confirm_by_ocr with OCR on) - the phone has no
+     * full-card OCR wired in, so such a decision is accepted as without OCR (ocrOn false), with the strip's guards. Null: no OCR, as before.
+     */
+    fun read(card: Mat, acceptImageAlone: Boolean, indexCovers: Boolean?, inData: (String) -> Boolean, foilNet: FoilNet? = null,
+             textReader: TextReader? = null, stripPrinting: ((set: String, number: String) -> StripPrinting)? = null): Reading {
         val search = search(card)
-        val decision = Decide.printing(search.candidates, Decide.Strip())            // no OCR: no strip
+        val strip = textReader?.let { readStrip(card, search.rotated, it, foilNet) }
+        val decision = Decide.printing(search.candidates, strip ?: Decide.Strip())
         val chosen = decision.printingId
-        val facts = Decide.Facts(acceptImageAlone = acceptImageAlone, indexCovers = indexCovers,
-            inData = chosen != null && index.facts.containsKey(chosen) && inData(chosen), stripNames = null, ocrOn = false)
+        val inDataNow = chosen != null && index.facts.containsKey(chosen) && inData(chosen)
+        // live_read: what the strip's whole line names is looked up only where a guard asks it - the picture alone, allowed, a printing in the card data
+        val stripNames = if (strip != null && decision.path == "image" && acceptImageAlone && inDataNow) stripNames(strip, chosen!!, stripPrinting) else null
+        val facts = Decide.Facts(acceptImageAlone = acceptImageAlone, indexCovers = indexCovers, inData = inDataNow, stripNames = stripNames, ocrOn = false)
         val acceptance = Decide.acceptPrinting(decision, facts)
-        if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null)
+        if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null, strip = strip, stripNames = stripNames)
+        if (strip != null) {
+            // with OCR: decide_finish on the strip's evidence (the printing's own finishes first, then the star / dot read, then the network at the OCR's box)
+            return Reading(search, decision, acceptance, Decide.finish(index.facts[chosen]?.finishes, strip.symbol, strip.net), strip.net, strip, stripNames)
+        }
         // The finish. The foil network at the fixed place - the server's live_read with no OCR reader: only when the search is sure which way up the card
         // is (the place is the set line on an UPRIGHT card) and every printing the picture cannot tell from its best match prints a marker (an old-frame card
         // feeds the network whatever is there: it answered confidently on 53 of 80 such cards). Only asked where the printing's own finishes leave it open
@@ -78,6 +101,49 @@ class PictureReader(private val index: ImageIndex) {
             fixedNet(card, search.rotated, foilNet)
         } else null
         return Reading(search, decision, acceptance, Decide.finish(finishes, "unknown", net), net)
+    }
+
+    /**
+     * printing_check.read_strip_evidence with an OCR reader: ONE read of the bottom-left strip of the card turned upright - its number and set
+     * (CardText.parseStrip), the symbol read in the set line (symbolRead), and the foil network's probability where no symbol was read, cut at the OCR's
+     * own box of the set line (FoilNet.setLineCrop); nothing read: an empty strip
+     */
+    private fun readStrip(card: Mat, rotated: Boolean, textReader: TextReader, foilNet: FoilNet?): Decide.Strip {
+        val upright = if (rotated) Mat().also { Core.rotate(card, it, Core.ROTATE_180) } else card
+        val strip = FoilNet.stripOf(upright)
+        try {
+            val lines = textReader.read(strip)
+            if (lines.isEmpty()) return Decide.Strip()
+            val (number, set) = CardText.parseStrip(lines)
+            val line = CardText.setLine(lines)
+            val symbol = line?.let { CardText.symbolRead(it) } ?: "unknown"
+            var net: Double? = null
+            if (symbol == "unknown" && foilNet != null && line != null) {
+                val crop = FoilNet.setLineCrop(strip, line.box.minOf { it.x }, line.box.minOf { it.y }, line.box.maxOf { it.x }, line.box.maxOf { it.y })
+                if (crop != null) try { net = foilNet.probability(crop) } finally { crop.release() }
+            }
+            return Decide.Strip(number, set, symbol, net)
+        } finally {
+            strip.release()
+            if (upright !== card) upright.release()
+        }
+    }
+
+    /**
+     * PrintingCheck._strip_names: what the strip's whole line names - null (no whole line: a number AND a set), "lookup_failed", "unknown" (the card data
+     * lacks it), "unindexed" (the card data has it, the index lacks it), "chosen" (the printing decided on), "indexed_other"
+     */
+    private fun stripNames(strip: Decide.Strip, chosen: String, stripPrinting: ((String, String) -> StripPrinting)?): String? {
+        if (strip.number.isEmpty() || strip.set.isEmpty()) return null
+        return when (val named = stripPrinting?.invoke(strip.set, strip.number) ?: StripPrinting.Failed) {
+            StripPrinting.Failed -> "lookup_failed"
+            StripPrinting.NotFound -> "unknown"
+            is StripPrinting.Found -> when {
+                index.row(named.id) == null -> "unindexed"
+                named.id == chosen -> "chosen"
+                else -> "indexed_other"
+            }
+        }
     }
 
     /** The network's probability of a foil, read at the fixed place of the card turned upright (the search says which way up it lies) - null when nothing to cut */
