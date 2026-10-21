@@ -67,6 +67,9 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     private val scryfall = Scryfall(http, cardData)
     private val cardDataRepository = CardDataRepository(cardData, viewModelScope)
     val cardDataState = cardDataRepository.state
+    // Standalone's reading by the picture (Settings -> Picture index): the index downloaded from a scanner server
+    private val pictureIndex = com.cardscanner.reading.PictureIndexRepository(application, http, cardData, viewModelScope)
+    val pictureIndexState = pictureIndex.state
     private val collection = CollectionRepository(application, viewModelScope, scryfall, http, history,
         settings = { settings.value }, onMessage = { _message.value = it })
     private val processor = CaptureProcessor(application, viewModelScope, http, scryfall, collection, history,
@@ -76,7 +79,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
         }, onCardBack = {
             _autoCapture.value = false
             _message.value = "Card back seen - auto-capture stopped. Start it again for the next stack."
-        })
+        }, pictureIndex = pictureIndex, cardData = cardData)
     val review = collection.review
     val inventoryEntries = collection.inventoryEntries
     val share = collection.share
@@ -98,6 +101,7 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     init {
         collection.refresh()
         cardDataRepository.start()
+        pictureIndex.start()
         processor.resume()
     }
 
@@ -153,6 +157,11 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
     fun checkCardDataUpdate() = cardDataRepository.checkCardDataUpdate()
     fun downloadCardData() = cardDataRepository.downloadCardData()
     fun deleteCardData() = cardDataRepository.deleteCardData()
+    /** The picture index from the scanner server at the address and token of client mode's settings */
+    fun downloadPictureIndex() = settings.value.let { pictureIndex.download(it.serverUrl, it.stationToken) }
+    fun deletePictureIndex() = pictureIndex.delete()
+    /** The card data changed: the index's coverage of it is counted again */
+    fun pictureIndexCardDataChanged() = pictureIndex.cardDataChanged()
     suspend fun suggestion(item: ReviewItem) = collection.suggestion(item)
     suspend fun identifyAgain(item: ReviewItem) = collection.identifyAgain(item)
     suspend fun searchPrintings(name: String, setCode: String, number: String) = collection.searchPrintings(name, setCode, number)

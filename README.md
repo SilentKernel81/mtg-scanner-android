@@ -13,7 +13,7 @@ Native Kotlin (Jetpack Compose, CameraX, OpenCV). It works in two ways, switched
 | | Standalone | Client of a scanner server |
 |---|---|---|
 | Finds and captures the card | the phone | the phone |
-| Reads the card | a vision AI the phone asks (Gemini, OpenAI, Anthropic, OpenRouter, a local Ollama) | the server: OCR first, then its vision AI |
+| Reads the card | its picture first (a picture index downloaded from a scanner server), then - when it is on - a vision AI the phone asks (Gemini, OpenAI, Anthropic, OpenRouter, a local Ollama); with the AI off, what the picture does not settle waits for review | the server: the picture, OCR, then its vision AI |
 | Finds the printing | the phone: offline card data, or the Scryfall API | the server |
 | Keeps the cards | the phone's own inventory and review queue; CSV / Moxfield export and import | the server's scanned cards, review queue and collection |
 | Needs | an AI key or a local model; internet for Scryfall unless the card data is downloaded | the server's address |
@@ -48,7 +48,13 @@ correct it, *Identify again*. With *Add confirmed cards automatically* off, ever
 for **Add**. These waiting cards are also saved in the review queue, so they survive restarting
 the app, clearing the scan list, or scanning more than the list's 100-card limit.
 The inventory can be sorted, filtered, edited, exported (CSV, Moxfield) and
-imported. Settings has the AI provider, model and key (or a local server's address), the
+imported. **Read by the picture first** (Settings -> Reading cards, on by default since 2026-10-21): with the
+offline card data and the picture index downloaded from a scanner server (its address in the same card), a card whose
+picture clearly matches one printing is added without the AI, offline, in a few hundredths of a second; the row says
+*read by the picture*. While the index lacks any printing of the card data (the two downloaded on different days) the
+picture adds nothing - Settings says so. **Ask the vision AI** off: what the picture does not settle waits for review, with
+the picture's best guess as the suggestion - no AI requests at all. Not yet tried on cards with the phone (only its
+parity tests); the foil of a printing made in both finishes needs the AI's foil check. Settings has the AI provider, model and key (or a local server's address), the
 offline card data (~80 MB, so lookups work without internet), the foil check and the capture
 thresholds.
 
@@ -89,7 +95,8 @@ collection in `core/` (`card_identifier.py`, `database.py`, `inventory.py`, ...)
 | `Outbox.kt`, `CaptureProcessor.kt`, `server/SendPolicy.kt` (when a capture stops being tried) | `station/station_client.py`: `Station.park`, `upload_verdict` (the server keeps its own record of captures being read: `pending.py`) | both modes |
 | `server/ScannerServer.kt` | `server/stations_api.py`: `station_capture`, `station_capture_outcome`, `station_undo` - the phone is a station | client mode |
 | `detection/CornerNet.kt`, `CornerMath.kt`, `CardFinder.kt`; `assets/corner_net.onnx` | `station/corner_net.py` (the network, run with OpenCV's dnn) and `ObjectDetector.detect` / `_plausible_neural` in `station/object_detector.py` (asked before `findCardOutline`; the outline detector answers when it is unsure) - the same file as the stations' (retrained 2026-10-15 on 42 more labelled frames; `CornerNetParityTest` and `parity/reference.json` were remade from it: Kotlin within 0.10 px of Python on four frames); trained in the server's repository (`scripts/train_corner_net.py`). Settings → Find cards with the corner network. **Written 2026-10-15; compared with the Python code on an emulator, not yet tried on a phone's camera** | both modes |
-| `reading/Decide.kt`, `reading/Fingerprint.kt`, `reading/FoilNet.kt`; `assets/foil_net.onnx` | `core/reading/decide.py` (`decide_printing` - rule A2 - `decide_finish`, `plain_number`), `core/image_index.py` (`prepare`, `hash_card`, `similarity`, and `stretch_plane`, `channel_bits` which were made functions of their own for this port) and `core/foil_marker.py` (`FoilMarker.probability`: the network only - finding the set line needs the server's OCR reader, which the phone does not have) in the server's repository - the reading of a card by its picture and collector line (docs/plans/READING_REFACTOR_PLAN.md there). Passes the server's own test files (`reading_decision_cases.json`, `reading_regression_cases.json`, `reading_finish_cases.json`: copies, made by `reading_reference.py`), and the fingerprint is the same as the Python one on three pictures (`FingerprintParityTest`) - **written 2026-10-20 and compared with the Python code on an x86-64 emulator, never on a phone. NOT USED BY THE APP: nothing calls it** (the phone reads with the vision AI, or the server does). Wiring it in needs the image index on the phone (about 15 MB, built from Scryfall's pictures) and the guards the server puts around a decision by the picture alone, which are not in `Decide.kt` (see CLAUDE.md) | not wired in |
+| `reading/Decide.kt`, `reading/Fingerprint.kt`, `reading/FoilNet.kt`; `assets/foil_net.onnx` | `core/reading/decide.py` (`decide_printing` - rule A2 - `decide_finish`, `accept_printing`, `confirm_by_ocr`, `plain_number`), `core/image_index.py` (`prepare`, `hash_card`, `similarity`, `stretch_plane`, `channel_bits`) and `core/foil_marker.py` (`FoilMarker.probability`: the network only) in the server's repository. Passes the server's own test files (copies made by `reading_reference.py`); the fingerprint and the network give the Python answers on an emulator AND on the owner's Pixel 10 (2026-10-21). `FoilNet.kt` is still not used (no strip: the phone has no OCR) | standalone (Decide, Fingerprint) |
+| `reading/ImageIndex.kt`, `reading/PictureReader.kt`, `reading/IndexDownload.kt`, `reading/PictureIndexRepository.kt` (+ `CaptureProcessor.readByPicture`) | `core/image_index.py`: `ImageIndex` (`load`, `distances`), `printings_table`; `core/printing_check.py`: `PrintingCheck.live_read` with NO OCR reader (`_search_now`, `_picture_evidence`, `orientation_established`), `missing_printings` (the coverage guard); `server/stations_api.py`: `image_index_download`, `image_index_file` - **reading by the picture first in standalone mode** (2026-10-21, the server's docs/plans/ANDROID_PICTURE_STANDALONE_PLAN.md): the index downloaded from a scanner server, the same decisions as the server's code on the 41 Pixel captures (`PictureReaderParityTest`, on the Pixel), 24 ms a card there | standalone |
 | `ui/CaptureWash.kt` (+ `ScannerScreen.kt`: `OutlineOverlay`) | `station/scanner.py`: `_mark_auto_card`, `_flash_capture`, `_wash_card` - a card found by its outline has no border, it is tinted in its state's colour (22%) and washed a stronger green (45%) fading out in 0.6 s at a capture; the fixed area keeps its rectangle and gets the wash. **Written 2026-10-15, not yet seen on a phone** | both modes |
 | `FrameSidecar.kt` (+ `ScannerViewModel.kt`: `cutOutCard`, `frameOf`; `Outbox.kt`) | `station/station_client.py`: `queue_upload`; `station/scanner.py`: `_frame_snapshot`; `core/frames.py`; `server/stations_api.py`: `keep_camera_frame` - the camera frame and the outline behind a capture, sent as training data (Settings → Send camera frames; **written 2026-10-14, not yet tried on a phone**) | client mode |
 | `ai/CardIdentifier.kt`, `ai/Prompts.kt` | `card_identifier.py`, `prompts.py` (`BUILT_IN['mtg']`) | standalone |
@@ -245,13 +252,19 @@ first, which removes the app's data.
   `app/src/test/resources`, run in the server's checkout with its venv, e.g. from there:
   `venv/bin/python ../mtg-scanner-android/app/src/test/resources/export_reference.py ../mtg-scanner-android/app/src/test/resources/export_reference.json`
   (`parser_reference.py` prints its JSON instead).
-- `ReadingDecideParityTest`, `FingerprintMathTest`, `FoilMathTest` (JVM) - the reading port (`reading/`, **not used by the app yet**):
+- `ReadingDecideParityTest`, `FingerprintMathTest`, `FoilMathTest`, `ImageIndexTest` (JVM) - the reading port (`reading/`):
   the decision against the server's three test files (22 hand-written cases, 135 captured from real pictures,
   20 for the finish), the fingerprint's arithmetic (the percentile stretch, the median and the packing of bits) and the
   foil network's (a crop's normalisation, the softmax) against vectors made by the Python code. `reading_reference.py` makes
   every reference file and the copies of the server's test files; run it from the server's checkout:
   `venv/bin/python ../mtg-scanner-android/app/src/test/resources/reading_reference.py`.
-- `FingerprintParityTest`, `FoilNetParityTest` (instrumented, **on an emulator, never the user's phone**) - the OpenCV
+- `PictureReaderParityTest`, `IndexDownloadTest` (instrumented) - the reading by the picture: the owner's 41 Pixel captures against the server checkout's
+  index give the server's decision for every one (28 added by the picture alone; 24 ms a card on the Pixel 10, 131 ms at most), and the index
+  downloaded from a real server (GET only: 116,331 printings, 21 MB in 3.5 s, loaded in 0.95 s, a file cut in half resumed). The first needs
+  `app/src/test/resources/picture_reference.py` run from the server's checkout (its assets, ~46 MB, are ignored by git); the second `-e server <address>`.
+  **Debug builds are `com.cardscanner.debug`** ("Card Scanner (debug)"): they and their tests install BESIDE the release app, with their own data,
+  so these may run on a phone - never `connectedDebugAndroidTest`, which uninstalls what it installed.
+- `FingerprintParityTest`, `FoilNetParityTest` (instrumented; on the emulator and, since 2026-10-21, the owner's Pixel 10 - 5 tests pass there) - the OpenCV
   steps and the network on the emulator: 2026-10-20, `Pixel_Phone` (x86-64): the fingerprint of two synthetic cards and one real
   capture (PNGs in `androidTest/assets/parity`) differs from the Python one in **0 of 768 bits**, and the foil network is
   within 5e-8 of the Python probability on 16 crops. Not tried on a phone (another CPU's DCT may put a frequency on the

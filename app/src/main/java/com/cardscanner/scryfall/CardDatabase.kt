@@ -156,6 +156,18 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
 
     fun byId(id: String): Printing? = query("id = ?", arrayOf(id)).firstOrNull()
 
+    /**
+     * How many printings of this card data [isIndexed] says no to - the picture index's coverage of it (reading/PictureIndexRepository: the picture alone adds
+     * nothing while the index lacks any printing, as on the server: PrintingCheck.missing_printings). Null without card data. One pass over the ids.
+     */
+    @Synchronized
+    fun countMissing(isIndexed: (String) -> Boolean): Int? {
+        val db = db ?: return null
+        var missing = 0
+        db.rawQuery("SELECT id FROM cards", null).use { c -> while (c.moveToNext()) if (!isIndexed(c.getString(0))) missing++ }
+        return missing
+    }
+
     /** The printing with this set code and one of these collector numbers */
     @Synchronized
     fun bySetNumber(setCode: String, numbers: List<String>): Printing? = numbers.firstNotNullOfOrNull { number ->

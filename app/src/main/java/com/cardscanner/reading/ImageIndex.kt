@@ -97,7 +97,10 @@ class ImageIndex private constructor(
                 val ids = String(idsBytes, Charsets.UTF_8).split(Regex("\\s+")).filter { it.isNotEmpty() }.toTypedArray()
                 val count = manifest.getInt("count")
                 if (ids.size != count || hashes.size != count * HASH_BYTES) return no("the index's sizes do not match its manifest")
-                val facts = readTable(File(folder, PRINTINGS)) ?: return no("the printings table is missing or not readable")
+                // the table of this download (IndexDownload names it per version, so a new download never rewrites the file a reader has open); a folder made
+                // by hand (the parity test's) has the plain name
+                val tableName = manifest.optString("printings").ifEmpty { PRINTINGS }.takeIf { File(it).name == it } ?: return no("the manifest names a path")
+                val facts = readTable(File(folder, tableName)) ?: return no("the printings table is missing or not readable")
                 Opened(ImageIndex(manifest.getString("generation"), manifest.optString("built").ifEmpty { null }, ids, toWords(hashes), facts), null)
             } catch (e: Exception) {
                 no("the index could not be read (${e.javaClass.simpleName}: ${e.message})")

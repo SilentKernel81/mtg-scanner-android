@@ -314,7 +314,8 @@ class Scryfall(private val http: OkHttpClient, private val local: CardDatabase? 
         const val USER_AGENT = "CardScanner-Android/0.1"
 
         /** Matches that identify the printing for sure (database.py:CONFIRMED_MATCHES) */
-        val CONFIRMED = setOf("set_number", "name_number", "name_set_digit")
+        // "picture": decided by the picture index (reading/PictureReader.kt) and taken by its id - the server counts it confirmed too (database.CONFIRMED_MATCHES)
+        val CONFIRMED = setOf("set_number", "name_number", "name_set_digit", "picture")
 
         /** "0330" -> ["330", "0330", "330s"]: numbers a scanned number may be in Scryfall data */
         fun numberVariants(collectorNumber: String): List<String> {

@@ -21,6 +21,8 @@ data class ScanResult(
     val error: String? = null,
     /** Tokens used by the AI requests for this card */
     val usage: Usage? = null,
+    /** Standalone: what read the card - "picture" (the picture index alone, no AI asked) or the AI's model; null before it is read */
+    val reader: String? = null,
     /** The inventory entry this card was added to (null: not added) */
     val inventoryId: Long? = null,
     /** The review queue item it went to (uncertain while adding automatically), or null */

@@ -61,9 +61,10 @@ internal fun ScanCard(viewModel: ScannerViewModel, scan: ScanResult, compact: Bo
                     // Who read it and, for a review, why: how the server's reading (OCR, picture + collector line, AI) is told apart
                     server?.status == ServerOutcome.Status.ADDED || server?.status == ServerOutcome.Status.REVIEW ||
                         server?.status == ServerOutcome.Status.CARD_BACK -> server.statusLine ?: "Sent to the server"
-                    scan.inventoryId != null -> "Added to inventory"
-                    scan.pendingAdd -> "Waiting for Add"
-                    scan.reviewId != null -> "Sent to review"
+                    // Standalone: who read it - the picture alone (no AI asked) or the AI - in client mode's words, so the two can be told apart in a test
+                    scan.inventoryId != null -> "Added to inventory" + readBy(scan.reader)
+                    scan.pendingAdd -> "Waiting for Add" + readBy(scan.reader)
+                    scan.reviewId != null -> "Sent to review" + readBy(scan.reader)
                     scan.status == ScanResult.Status.FAILED -> scan.error ?: "Could not identify"
                     else -> scan.error ?: "Check this printing"
                 }
@@ -90,4 +91,11 @@ internal fun ScanCard(viewModel: ScannerViewModel, scan: ScanResult, compact: Bo
             }
         }
     }
+}
+
+/** " · read by the picture" / " · read by AI (model)" for a standalone row, or nothing (not read, or read before the reader was kept) */
+private fun readBy(reader: String?): String = when (reader) {
+    null, "" -> ""
+    com.cardscanner.CaptureProcessor.PICTURE_READER -> " · read by the picture"
+    else -> " · read by AI ($reader)"
 }

@@ -80,6 +80,8 @@ internal class SettingsStorage(
             serverUrl = prefs.getString("server_url", "").orEmpty(),
             localUrl = prefs.getString("local_url", "").orEmpty(),
             detectFoil = prefs.getBoolean("detect_foil", true),
+            pictureFirst = prefs.getBoolean("picture_first", true),
+            aiEnabled = prefs.getBoolean("ai_enabled", true),
             minSharpness = prefs.getInt("min_sharpness", 250),
             stableFrames = prefs.getInt("stable_frames", 5),
             rotation = prefs.getInt("rotation", 0),
@@ -119,6 +121,8 @@ internal class SettingsStorage(
             Provider.entries.forEach { editor.putString("model_${it.id}", settings.models[it].orEmpty()) }
             editor.putString("local_url", settings.localUrl)
                 .putBoolean("detect_foil", settings.detectFoil)
+                .putBoolean("picture_first", settings.pictureFirst)
+                .putBoolean("ai_enabled", settings.aiEnabled)
                 .putInt("min_sharpness", settings.minSharpness)
                 .putInt("stable_frames", settings.stableFrames)
                 .putInt("rotation", settings.rotation)

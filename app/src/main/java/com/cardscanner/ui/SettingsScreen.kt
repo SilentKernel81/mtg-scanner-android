@@ -70,7 +70,8 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         FeedCard { ServerSection(viewModel) }
 
         if (!settings.serverMode) {
-        FeedCard {
+        FeedCard { ReadingSection(viewModel) }
+        if (settings.aiEnabled) FeedCard {
         Text("Vision AI", style = MaterialTheme.typography.titleMedium)
         Dropdown("Provider", provider.label, Provider.entries.map { it.label }) {
             viewModel.updateSettings(settings.copy(provider = Provider.entries[it]))
@@ -158,9 +159,11 @@ fun SettingsScreen(viewModel: ScannerViewModel, onBack: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Foil check (★/• marker)")
-                Text("A second, small AI request per card", style = MaterialTheme.typography.bodySmall)
+                Text(if (settings.aiEnabled) "A second, small AI request per card (only for a printing that exists in both finishes)"
+                    else "Needs the vision AI, which is off: a card printed in both finishes is added non-foil unless you change it",
+                    style = MaterialTheme.typography.bodySmall)
             }
-            Switch(settings.detectFoil, { viewModel.updateSettings(settings.copy(detectFoil = it)) })
+            Switch(settings.detectFoil, { viewModel.updateSettings(settings.copy(detectFoil = it)) }, enabled = settings.aiEnabled)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -299,6 +302,67 @@ private fun NumberField(label: String, value: Int, help: String, onChange: (Int)
 }
 
 /** Offline card data: download / update / delete Scryfall's card list */
+/**
+ * Standalone: how a card is read - by its picture first (the picture index, downloaded from a scanner server), and whether the vision AI is asked for what
+ * the picture does not settle (off: those cards go to review). The server's own reading with OCR off (docs/plans/ANDROID_PICTURE_STANDALONE_PLAN.md there)
+ */
+@Composable
+private fun ReadingSection(viewModel: ScannerViewModel) {
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val index by viewModel.pictureIndexState.collectAsStateWithLifecycle()
+    val cardData by viewModel.cardDataState.collectAsStateWithLifecycle()
+    // the card data changed (downloaded, updated, deleted): the index's coverage of it is counted again
+    androidx.compose.runtime.LaunchedEffect(cardData.updatedAt, cardData.printings) { viewModel.pictureIndexCardDataChanged() }
+    Text("Reading cards", style = MaterialTheme.typography.titleMedium)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Read by the picture first")
+            Text("The card's picture is matched against every printing; a clear match is added without the AI, in a few hundredths of a second, offline. Needs the picture index and the card data below.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(settings.pictureFirst, { viewModel.updateSettings(settings.copy(pictureFirst = it)) })
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Ask the vision AI")
+            Text(if (settings.aiEnabled) "For what the picture does not settle (and the foil check)."
+                else "Off: what the picture does not settle waits for review - no AI requests, no key needed.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(settings.aiEnabled, { viewModel.updateSettings(settings.copy(aiEnabled = it)) })
+    }
+    if (!settings.pictureFirst) return
+    Text("Picture index", style = MaterialTheme.typography.titleSmall)
+    Text(
+        when {
+            index.count != null -> "%,d printings, built %s on the server".format(index.count, index.built?.take(10).orEmpty()) + when {
+                index.missing == null -> " - download the card data to use it"
+                index.missing == 0 -> " - covers the card data"
+                else -> " - lacks %,d printings of the card data: the picture adds nothing until both are of the same day (download the index again after the server's, or the card data again)".format(index.missing)
+            }
+            else -> "Not downloaded (${index.why ?: "no index"}). It comes from a scanner server (Settings > Card reading > Picture there), about 22 MB."
+        },
+        style = MaterialTheme.typography.bodySmall,
+    )
+    OutlinedTextField(
+        value = settings.serverUrl,
+        onValueChange = { viewModel.updateSettings(settings.copy(serverUrl = it.trim())) },
+        label = { Text("Scanner server to download it from") },
+        placeholder = { Text("http://192.168.1.20:5000") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    index.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = viewModel::downloadPictureIndex, enabled = !index.busy && settings.serverUrl.isNotBlank()) {
+            Text(if (index.count == null) "Download" else "Update")
+        }
+        if (index.count != null) OutlinedButton(onClick = viewModel::deletePictureIndex, enabled = !index.busy) { Text("Delete") }
+        if (index.busy) androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+    }
+}
+
 @Composable
 private fun CardDataSection(viewModel: ScannerViewModel) {
     val state by viewModel.cardDataState.collectAsStateWithLifecycle()

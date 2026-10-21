@@ -8,6 +8,10 @@ import com.cardscanner.ai.CardReading
 import com.cardscanner.ai.Foil
 import com.cardscanner.inventory.CollectionRepository
 import com.cardscanner.inventory.FinishPolicy
+import com.cardscanner.reading.PictureIndexRepository
+import com.cardscanner.reading.PictureReader
+import com.cardscanner.scryfall.CardDatabase
+import com.cardscanner.scryfall.Printing
 import com.cardscanner.server.SendPolicy
 import com.cardscanner.server.ScannerServer
 import com.cardscanner.server.ServerOutcome
@@ -27,6 +31,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
+import org.opencv.android.Utils
+import org.opencv.core.Mat
 
 /** Disk-backed capture workflow: bounded processing, retries and standalone/server settlement. */
 internal class CaptureProcessor(
@@ -41,6 +47,10 @@ internal class CaptureProcessor(
     private val onSaveFailure: () -> Unit,
     /** The server answered a capture with CARD_BACK: a face-down card was dropped, the auto-capture stops (ScannerViewModel) */
     private val onCardBack: () -> Unit = {},
+    /** Standalone: the picture index and its reader (reading by the picture first); null: never read by the picture */
+    private val pictureIndex: PictureIndexRepository? = null,
+    /** The offline card data: a card the picture decides is taken from it by its id */
+    private val cardData: CardDatabase? = null,
 ) {
     private val outbox = Outbox(context)
     private val aiSlots = Semaphore(1)
@@ -169,7 +179,42 @@ internal class CaptureProcessor(
         CardIdentifier(it.provider, it.model(), it.apiKey(), it.localUrl, http)
     }
 
-    fun warmUp() { scope.launch(Dispatchers.IO) { identifier().warmUp() } }
+    fun warmUp() { if (settings().askAi) scope.launch(Dispatchers.IO) { identifier().warmUp() } }
+
+    /** What the picture said of a capture: the printing to add (accepted by the guards), or only its best guess (for review), and why not */
+    private class ByPicture(val printing: Printing?, val guess: Printing?, val why: String?)
+
+    /**
+     * Standalone, Read by the picture first: the flat card's picture against the index (reading/PictureReader.kt - the server's reading with OCR off). Null
+     * when it cannot speak at all (no index, no flat card, a failure: the card is read as before - never lost to this). The printing it accepts is taken from
+     * the card data BY ITS ID (tag "picture", one of Scryfall.CONFIRMED), never looked up again by name / number / set.
+     */
+    private fun readByPicture(foilCard: Bitmap?): ByPicture? {
+        val reader = pictureIndex?.reader() ?: return null
+        val data = cardData ?: return null
+        if (foilCard == null) return null                     // no outline (a fixed area): the picture is not a card - the index is of whole cards
+        val mat = Mat()
+        return try {
+            Utils.bitmapToMat(foilCard, mat)                  // RGBA: Fingerprint.hash drops the alpha
+            val reading = reader.read(mat, acceptImageAlone = true, indexCovers = pictureIndex.covers()) { data.byId(it) != null }
+            val accepted = reading.printingId?.let { data.byId(it) }?.copy(match = "picture")
+            val guess = reading.search.candidates.firstOrNull()?.let { data.byId(it.id) }
+            val why = when {
+                accepted != null -> null
+                reading.acceptance.refused != null -> reading.acceptance.refused!!.replace('_', ' ')
+                else -> "the picture looks like several printings"
+            }
+            Log.i(TAG, "Picture: ${reading.decision.path} ${accepted?.let { "${it.name} ${it.setCode} #${it.collectorNumber}" } ?: "-"} " +
+                "(similarity ${reading.decision.similarity?.let { "%.3f".format(it) }}, lead ${reading.decision.lead?.let { "%.3f".format(it) }}" +
+                (why?.let { ", $it" } ?: "") + ")")
+            ByPicture(accepted, guess, why)
+        } catch (e: Exception) {
+            Log.w(TAG, "Reading by the picture failed (${e.message}) - read as before", e)
+            null
+        } finally {
+            mat.release()
+        }
+    }
 
     /**
      * A capture: shown in the list, saved in the outbox and processed (see process). reviewOnly
@@ -293,6 +338,35 @@ internal class CaptureProcessor(
         lateinit var reading: CardReading
         var marker = Foil.UNKNOWN
         val settings = settings()
+        // The picture first (Read by the picture first): what it settles is added without the AI - the server's order, picture then the rest
+        val picture = if (settings.pictureFirst) readByPicture(foilCard) else null
+        picture?.printing?.let { printing ->
+            val read = CardReading(printing.name, printing.collectorNumber, printing.setCode)
+            // The finish: the printing's own when it exists in one only; else the AI's foil check (when the AI and the foil check are on) - the phone has
+            // no reading of the marker of its own (the server's network at a fixed place needs facts the index's table does not carry yet)
+            val both = ("foil" in printing.finishes || "etched" in printing.finishes) && "nonfoil" in printing.finishes
+            val pictureMarker = if (both && settings.askAi && settings.detectFoil && foilCard != null)
+                try { identifier().readFoilSymbol(foilCard) } catch (e: CancellationException) { throw e } catch (e: Exception) { Foil.UNKNOWN }
+                else Foil.UNKNOWN
+            val (foil, reason) = FinishPolicy.suggest(printing, pictureMarker)
+            val result = ScanResult(id, thumbnail, ScanResult.Status.DONE, read, printing, foil, reason,
+                seconds = (System.nanoTime() - start) / 1e9, reader = PICTURE_READER)
+            Log.i(TAG, "Identified #$id by the picture: ${printing.name} ${printing.setCode} #${printing.collectorNumber} foil=$foil in %.2f s".format(result.seconds))
+            collection.settleCapture(id, card, read, pictureMarker, result, captureId, settings, reviewOnly)
+            return true
+        }
+        if (!settings.askAi) {
+            // The vision AI is switched off: what the picture did not settle waits for review, with the picture's best guess as the suggestion
+            val why = when {
+                picture == null && settings.pictureFirst -> "Not read: the AI is off and there is no picture index to read by"
+                picture == null -> "Not read: the AI and the reading by the picture are off"
+                else -> "The picture is not sure (${picture.why}) and the AI is off"
+            }
+            val guess = picture?.guess
+            fail(id, why)
+            collection.queueForReview(id, card, guess?.let { CardReading(it.name, it.collectorNumber, it.setCode) }, Foil.UNKNOWN, guess, why, captureId)
+            return true
+        }
         val result = try {
             val identifier = identifier()
             val (answer, read) = identifier.identify(card)
@@ -308,7 +382,7 @@ internal class CaptureProcessor(
             val printing = scryfall.find(reading.name, reading.collectorNumber, reading.setCode)
             val (foil, reason) = FinishPolicy.suggest(printing, marker)
             ScanResult(id, thumbnail, ScanResult.Status.DONE, reading, printing, foil, reason,
-                seconds = (System.nanoTime() - start) / 1e9, usage = identifier.usage,
+                seconds = (System.nanoTime() - start) / 1e9, usage = identifier.usage, reader = settings.model(),
                 error = if (printing == null) "Not found on Scryfall" else null)
         } catch (e: CancellationException) {
             throw e
@@ -485,5 +559,7 @@ internal class CaptureProcessor(
     companion object {
         private val emptyBitmap: Bitmap by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888) }
         private const val TAG = "Scanner"
+        /** The reader of a card the picture decided (ScanResult.reader; the server's PICTURE_READER, "picture") */
+        const val PICTURE_READER = "picture"
     }
 }

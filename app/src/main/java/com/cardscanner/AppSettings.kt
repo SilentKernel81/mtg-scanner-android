@@ -14,6 +14,16 @@ data class AppSettings(
     val apiKeys: Map<Provider, String> = emptyMap(),
     val localUrl: String = "",
     val detectFoil: Boolean = true,
+    /**
+     * Standalone: read a card by its picture first (the picture index downloaded from a scanner server, reading/PictureReader.kt) - what it settles is added
+     * without the AI. On by default (the owner's choice, 2026-10-21); without an index, or one that lacks printings of the card data, cards are read as before
+     */
+    val pictureFirst: Boolean = true,
+    /**
+     * Standalone: ask the vision AI at all. Off: what the picture does not settle goes to the review queue (no AI request - no key, no network for reading),
+     * and the foil check is not asked either. Every place that asks the AI asks [askAi]
+     */
+    val aiEnabled: Boolean = true,
     /** Don't auto-capture below this sharpness (Laplacian variance, see CardTracker) */
     val minSharpness: Int = 250,
     /** Consecutive still, in-focus frames before an auto-capture */
@@ -57,6 +67,9 @@ data class AppSettings(
 ) {
     /** The fixed area in use, or null (outline mode) */
     val activeArea get() = fixedArea?.takeIf { fixedAreaEnabled }
+
+    /** Whether a standalone capture may ask the vision AI (the one check every AI request goes through) */
+    val askAi get() = aiEnabled
 
     fun model(provider: Provider = this.provider) = models[provider]?.takeIf { it.isNotBlank() } ?: provider.models.first()
     fun apiKey(provider: Provider = this.provider) = apiKeys[provider].orEmpty()
