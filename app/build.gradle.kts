@@ -84,6 +84,7 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network)
     implementation(libs.opencv)
+    implementation(libs.onnxruntime)
 
     testImplementation(libs.junit)
     testImplementation(libs.json)
