@@ -51,7 +51,8 @@ class FoilNet private constructor(private val net: Net) {
             net.setInput(blob)
             val out = net.forward()
             try {
-                out.reshape(1, 1).get(0, 0, logits)
+                val view = out.reshape(1, 1)                    // a new Mat sharing out's memory: released too
+                try { view.get(0, 0, logits) } finally { view.release() }
             } finally {
                 out.release()
             }

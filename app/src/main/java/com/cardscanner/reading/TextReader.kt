@@ -77,8 +77,10 @@ class TextReader private constructor(private val det: Net, private val rec: Net,
         synchronized(det) {
             det.setInput(blob)
             val out = det.forward()
-            prob = out.reshape(1, rows).clone()                       // 1 x 1 x rows x cols -> rows x cols, CV_32F
-            out.release()
+            // 1 x 1 x rows x cols -> rows x cols, CV_32F, copied: reshape() is a new Mat SHARING out's memory - released here with out, or that memory
+            // waits for the garbage collector (a Codex review of 2026-10-21; a whole card's map is ~2.7 MB)
+            val view = out.reshape(1, rows)
+            try { prob = view.clone() } finally { view.release(); out.release() }
         }
         blob.release()
         // bitmap = prob > threshold; contours of it (RETR_LIST, CHAIN_APPROX_SIMPLE)
@@ -192,8 +194,9 @@ class TextReader private constructor(private val det: Net, private val rec: Net,
             steps = out.size(1)
             classes = out.size(2)
             probabilities = FloatArray(steps * classes)
-            out.reshape(1, steps * classes).get(0, 0, probabilities)
-            out.release()
+            // a reshape() is a view sharing out's memory (steps x 18,710 floats: ~3 MB for a long line): both released here, never left to the collector
+            val view = out.reshape(1, steps * classes)
+            try { view.get(0, 0, probabilities) } finally { view.release(); out.release() }
         }
         blob.release()
         val (text, confidence, _) = TextMath.ctcDecode(probabilities, steps, classes, dictionary)

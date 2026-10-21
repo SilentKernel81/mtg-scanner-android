@@ -106,6 +106,31 @@ class TextReaderParityTest {
         assertTrue("${problems.size} differences from the Python reference:\n${problems.joinToString("\n")}", problems.isEmpty())
     }
 
+    /**
+     * Native memory stays bounded while reading (a Codex review of 2026-10-21: the networks' outputs were reshaped into views that were never released,
+     * so each read left megabytes of native memory to the garbage collector): the 10-line card read 30 times after a warm-up, with no collection
+     * forced in between - the native heap may not grow by more than a few reads' worth. Logs the figures.
+     */
+    @Test fun nativeMemoryStaysBoundedOverManyReads() {
+        val reader = reader()
+        val card = pictures.first { it.getString("kind") == "card" && it.getJSONArray("lines").length() >= 8 }.getString("picture")
+        val picture = rgba(card)
+        repeat(3) { reader.read(picture) }                              // warm-up: the networks' own buffers
+        Runtime.getRuntime().gc(); System.runFinalization(); Runtime.getRuntime().gc()
+        val before = android.os.Debug.getNativeHeapAllocatedSize()
+        repeat(30) { reader.read(picture) }
+        val after = android.os.Debug.getNativeHeapAllocatedSize()
+        picture.release()
+        val grownMb = (after - before) / 1048576.0
+        android.util.Log.i("Scanner", "TextReaderParityTest: native heap %.1f MB before 30 reads of $card, %.1f MB after (%+.1f MB)".format(before / 1048576.0, after / 1048576.0, grownMb))
+        assertTrue("the native heap grew by %.1f MB over 30 reads".format(grownMb), grownMb < LEAK_LIMIT_MB)
+    }
+
+    companion object {
+        /** 30 reads of a 10-line card: one read's outputs are ~3 MB a line in the recognizer - a leak would be tens of MB; the allocator's slack is a few */
+        const val LEAK_LIMIT_MB = 15.0
+    }
+
     @Test fun twoThreadsReadingAtOnceDoNotCrash() {
         val reader = reader()
         val name = pictures.first().getString("picture")

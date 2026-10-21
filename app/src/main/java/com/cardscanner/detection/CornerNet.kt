@@ -87,7 +87,10 @@ class CornerNet private constructor(private val net: Net) {
         try {
             val maps = outputs.first { it.dims() > 2 }
             val flat = FloatArray(maps.total().toInt())
-            maps.reshape(1, CornerMath.MAP_H * 4).get(0, 0, flat)
+            // reshape() is a new Mat sharing the maps' memory: released here, or that memory waits for the garbage collector after the outputs are released
+            // (per camera frame - a Codex review of 2026-10-21 found the pattern in the OCR reader)
+            val view = maps.reshape(1, CornerMath.MAP_H * 4)
+            try { view.get(0, 0, flat) } finally { view.release() }
             val presence = outputs.first { it.dims() <= 2 }.get(0, 0)[0]
             val corners = CornerMath.decode(flat).map { CornerMath.toFrame(it, cx, cy, height) }
             return corners to CornerMath.sigmoid(presence)
