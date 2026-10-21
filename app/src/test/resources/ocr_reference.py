@@ -146,3 +146,34 @@ for name, lines in hand:
 shutil.copyfile(RESOURCES / 'ocr_parser_reference.json', ANDROID / 'app/src/androidTest/assets/parity/ocr_parser_reference.json')
 print(f"{len(grow_cases)} grow, {len(clockwise_cases)} clockwise, {len(order_cases)} reading-order, {len(width_cases)} width, {len(ctc_cases)} CTC cases; "
       f"{len(parser_cases)} parser cases")
+
+# --- the parity pictures for TextReaderParityTest (step 3): PNGs (lossless - a JPEG decoder on Android gives other pixels), read back, and the Python
+# reference's lines of each with its trace (the detector's input size, the boxes before and after growing, each line's crop / tensor / argmax) ---
+PARITY = ANDROID / 'app/src/androidTest/assets/parity/ocr'
+if PARITY.exists():
+    shutil.rmtree(PARITY)
+PARITY.mkdir(parents=True)
+phone = sorted((T / 'rescan_cards').glob('*.jpg'))
+wanted = ['phone-0240eb84_1043_', 'phone-0240eb84_1030_', 'phone-0240eb84_1037_', 'phone-0240eb84_1039_', 'phone-0240eb84_1045_', 'phone-0240eb84_103_']
+chosen = [next(p for p in phone if p.name.startswith(w)) for w in wanted]
+stations = sorted((T / 'captures').glob('*.jpg'))[:2]
+parity = []
+for path, kind in [(p, 'strip') for p in chosen + stations] + [(chosen[1], 'card'), (stations[0], 'card')]:
+    rgb = cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB)
+    image = foil_marker.strip_of(rgb) if kind == 'strip' else cv2.resize(rgb, (rgb.shape[1] // 2, rgb.shape[0] // 2), interpolation=cv2.INTER_AREA)
+    name = f'{path.stem}_{kind}.png'
+    cv2.imwrite(str(PARITY / name), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+    image = cv2.cvtColor(cv2.imread(str(PARITY / name)), cv2.COLOR_BGR2RGB)          # read back: the reference is of the PNG's own pixels
+    trace = {}
+    lines = reader.read_lines(image, trace)
+    for entry in trace.get('lines', []):
+        entry.pop('indices', None)                                                  # long: the texts are what is compared
+    parity.append({'picture': name, 'kind': kind, 'width': image.shape[1], 'height': image.shape[0], 'lines': lines,
+                   'detection_size': trace['detection_size'], 'quads': trace['quads'], 'crops': trace.get('lines', []),
+                   'parse_strip': list(card_ocr.parse_strip(lines)) if kind == 'strip' else None,
+                   'symbol_read': (foil_marker.symbol_read(foil_marker.set_line(lines)) if foil_marker.set_line(lines) else None) if kind == 'strip' else None,
+                   'parse_magic': card_ocr.parse_magic(lines, image.shape[1], image.shape[0]) if kind == 'card' else None})
+sums_out = {name: hashlib.sha256((ASSETS / name).read_bytes()).hexdigest() for name in ('det.onnx', 'rec.onnx', 'dictionary.json')}
+(PARITY / 'ocr_lines.json').write_text(json.dumps({'_note': 'Made by ocr_reference.py from the server\'s ppocr_reference.py - never edit by hand.',
+                                                   'assets_sha256': sums_out, 'row_band': reader.row_band, 'pictures': parity}, indent=1, ensure_ascii=False))
+print(f"{len(parity)} parity pictures: " + ', '.join(f"{p['picture']} {len(p['lines'])} lines" for p in parity))
