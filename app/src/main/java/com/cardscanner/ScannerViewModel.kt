@@ -73,6 +73,9 @@ class ScannerViewModel internal constructor(application: Application, http: OkHt
         settings = { settings.value }, onMessage = { _message.value = it }, onSaveFailure = {
             _autoCapture.value = false
             _message.value = "Capture could not be saved. Free storage and capture this card again."
+        }, onCardBack = {
+            _autoCapture.value = false
+            _message.value = "Card back seen - auto-capture stopped. Start it again for the next stack."
         })
     val review = collection.review
     val inventoryEntries = collection.inventoryEntries

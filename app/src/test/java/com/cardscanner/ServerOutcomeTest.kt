@@ -53,6 +53,16 @@ class ServerOutcomeTest {
     }
 
     @Test
+    fun aCardBackIsItsOwnAnswerNotAnError() {
+        // the server's answer when a face-down card was captured (captures.stop_at_card_back): nothing added, no sync key, the auto-capture stops
+        val back = ServerOutcome.parse(JSONObject("""{"capture":7,"status":"card_back","similarity":0.61,"success":true}"""))
+        assertEquals(ServerOutcome.Status.CARD_BACK, back.status)
+        assertEquals(7, back.capture)
+        assertEquals(null, back.syncKey)                       // the sync loop never asks about it
+        assertEquals("Card back: auto-capture stopped", back.statusLine)
+    }
+
+    @Test
     fun pendingAndError() {
         assertEquals(ServerOutcome.Status.PENDING, ServerOutcome.parse(JSONObject("""{"capture":2,"status":"pending","success":true}""")).status)
         val error = ServerOutcome.parse(JSONObject("""{"capture":4,"status":"error","message":"disk full","success":false}"""))

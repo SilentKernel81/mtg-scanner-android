@@ -162,7 +162,12 @@ the other way round.
 - **Client mode**: `ScannerServer.sendCapture` posts the photo to
   `/api/stations/<station id>/captures` with a `capture_id` (the outbox id), so a capture
   sent again after no answer is still one card on the server. The answer (`ServerOutcome`) is
-  *added*, *review*, or *pending* - then `outcome()` asks again every 2 s.
+  *added*, *review*, or *pending* - then `outcome()` asks again every 2 s - or *card back*: the phone
+  sends `accepts=card_back`, and a card dropped face down is answered `card_back` by the server
+  (its `captures.stop_at_card_back`, per camera, Settings > Cameras on the server): nothing is added, the
+  row says "Card back: auto-capture stopped", the review sound plays and the phone's auto-capture
+  switches off (`CaptureProcessor.onCardBack` -> `ScannerViewModel`). Since 2026-10-21; **not yet tried
+  on a phone** (`ServerOutcomeTest` only).
   Each row says who read the card and, for a review, why (`ServerOutcome.statusLine`: *OCR*,
   *picture + collector line* - the server's `reading.mode: evidence`, no AI asked - or *AI (model)*), which is
   how the server's reading is told apart from the phone. The phone sends the flat warped card as

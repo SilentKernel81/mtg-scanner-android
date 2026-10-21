@@ -35,8 +35,12 @@ data class ServerOutcome(
     /** ERROR: the server's message */
     val message: String? = null,
 ) {
-    /** ADDED to the scanned cards; REVIEW: in the server's review queue; PENDING: still being read */
-    enum class Status { ADDED, REVIEW, PENDING, ERROR }
+    /**
+     * ADDED to the scanned cards; REVIEW: in the server's review queue; PENDING: still being read; CARD_BACK: the capture was the back of a card - the server added
+     * nothing and the phone stops its auto-capture (the server's captures.stop_at_card_back: a face-down card ends a stack; sent only because sendCapture says
+     * `accepts=card_back` - an app without this status would show it as an error)
+     */
+    enum class Status { ADDED, REVIEW, PENDING, ERROR, CARD_BACK }
 
     /**
      * How the server read the card, in words for the screen: its `reader` is "light-ocr" (the full-card OCR), "picture+strip"
@@ -58,6 +62,7 @@ data class ServerOutcome(
             Status.ADDED -> "Added on the server" + (readerLabel?.let { " · $it" } ?: "")
             Status.REVIEW -> "Sent to server review" + (reason?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +
                 (readerLabel?.let { " · read by $it" } ?: "")
+            Status.CARD_BACK -> "Card back: auto-capture stopped"
             else -> null
         }
 
@@ -67,6 +72,7 @@ data class ServerOutcome(
                 "added" -> Status.ADDED
                 "review" -> Status.REVIEW
                 "pending" -> Status.PENDING
+                "card_back" -> Status.CARD_BACK
                 else -> Status.ERROR
             }
             val card = json.optJSONObject("card")?.let {
@@ -150,6 +156,8 @@ class ScannerServer(serverUrl: String, val stationId: String, private val statio
             .addFormDataPart("name", stationName)
             .addFormDataPart("capture_id", captureId)
             .addFormDataPart("wait", waitSeconds.toString())
+            // The answers this app understands beyond added / review / pending / error: the server answers a card back only to a sender that says so
+            .addFormDataPart("accepts", "card_back")
             .addFormDataPart("image", "card.jpg", jpeg(card).toRequestBody(JPEG))
         if (foilCard === card) body.addFormDataPart("foil_is_image", "1")
         else if (foilCard != null) body.addFormDataPart("foil_image", "foil.jpg", jpeg(foilCard).toRequestBody(JPEG))

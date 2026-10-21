@@ -39,6 +39,8 @@ internal class CaptureProcessor(
     private val settings: () -> AppSettings,
     private val onMessage: (String) -> Unit,
     private val onSaveFailure: () -> Unit,
+    /** The server answered a capture with CARD_BACK: a face-down card was dropped, the auto-capture stops (ScannerViewModel) */
+    private val onCardBack: () -> Unit = {},
 ) {
     private val outbox = Outbox(context)
     private val aiSlots = Semaphore(1)
@@ -94,6 +96,8 @@ internal class CaptureProcessor(
         // The server already said it cannot follow this capture, and the user was told: this
         // second Remove is the choice to take it off the phone's list only
         if (scan.serverCannotFollow) { history.dismiss(id); _serverUndo.compareAndSet(id, null); return }
+        // A card back: the server kept no copy of it (its sync route refuses it) - the row is only the phone's
+        if (scan.server?.status == ServerOutcome.Status.CARD_BACK) { history.dismiss(id); return }
         val capture = scan.server?.capture
         if (capture == null) {
             val item = pendingItems[id]
@@ -443,6 +447,14 @@ internal class CaptureProcessor(
                 if (outcome.status == ServerOutcome.Status.ADDED) {
                     if (soundSettings.addedSound) Sounds.added()
                 } else if (soundSettings.reviewSound) Sounds.review()
+            }
+            ServerOutcome.Status.CARD_BACK -> {
+                // Nothing was added: the row says so, the review sound is the signal, and the auto-capture stops like the server's camera pages do
+                history.update { list -> list.map {
+                    if (it.id == id) it.copy(status = ScanResult.Status.DONE, server = outcome, serverUrl = server.baseUrl, stationId = server.stationId, seconds = seconds, note = null) else it
+                } }
+                if (settings().reviewSound) Sounds.review()
+                onCardBack()
             }
             ServerOutcome.Status.PENDING -> fail(id, "The server is still reading it - see its page")
             ServerOutcome.Status.ERROR -> fail(id, "Server: ${outcome.message ?: "error"}")
