@@ -258,7 +258,8 @@ first, which removes the app's data.
   foil network's (a crop's normalisation, the softmax) against vectors made by the Python code. `reading_reference.py` makes
   every reference file and the copies of the server's test files; run it from the server's checkout:
   `venv/bin/python ../mtg-scanner-android/app/src/test/resources/reading_reference.py`.
-- `PictureReaderParityTest`, `IndexDownloadTest` (instrumented) - the reading by the picture: the owner's 41 Pixel captures against the server checkout's
+- `PictureReaderParityTest`, `IndexDownloadTest`, `PictureFirstTest` (instrumented) - the reading by the picture (`PictureFirstTest`: end to end through
+  `identifyOnce` with the AI off and no network - a card added by the picture with its very printing, one waiting for review with the picture's guess): the owner's 41 Pixel captures against the server checkout's
   index give the server's decision for every one (28 added by the picture alone; 24 ms a card on the Pixel 10, 131 ms at most), and the index
   downloaded from a real server (GET only: 116,331 printings, 21 MB in 3.5 s, loaded in 0.95 s, a file cut in half resumed). The first needs
   `app/src/test/resources/picture_reference.py` run from the server's checkout (its assets, ~46 MB, are ignored by git); the second `-e server <address>`.

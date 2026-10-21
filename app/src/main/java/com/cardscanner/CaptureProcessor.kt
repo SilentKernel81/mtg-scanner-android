@@ -208,7 +208,9 @@ internal class CaptureProcessor(
                 "(similarity ${reading.decision.similarity?.let { "%.3f".format(it) }}, lead ${reading.decision.lead?.let { "%.3f".format(it) }}" +
                 (why?.let { ", $it" } ?: "") + ")")
             ByPicture(accepted, guess, why)
-        } catch (e: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {          // anything - an Error too (out of memory, a native library): the card is read as before, never lost to this
             Log.w(TAG, "Reading by the picture failed (${e.message}) - read as before", e)
             null
         } finally {
