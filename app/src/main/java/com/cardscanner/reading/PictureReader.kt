@@ -87,7 +87,19 @@ class PictureReader(private val index: ImageIndex) {
         // live_read: what the strip's whole line names is looked up only where a guard asks it - the picture alone, allowed, a printing in the card data
         val stripNames = if (strip != null && decision.path == "image" && acceptImageAlone && inDataNow) stripNames(strip, chosen!!, stripPrinting) else null
         val facts = Decide.Facts(acceptImageAlone = acceptImageAlone, indexCovers = indexCovers, inData = inDataNow, stripNames = stripNames, ocrOn = false)
-        val acceptance = Decide.acceptPrinting(decision, facts)
+        var acceptance = Decide.acceptPrinting(decision, facts)
+        // The strip's half of the server's confirm_by_ocr (a Codex review of 2026-10-21): with OCR on, the server asks the full-card OCR to confirm a decision
+        // by the picture alone, and a STRIP naming another printing of the SAME card refuses it whatever the name and the lead (strip_names 'same_card') -
+        // the picture chose A, a readable collector line says B. The phone has no full-card OCR yet, so it asks that half alone: an indexed printing the
+        // line names, other than the chosen one, of the same card (oracle id, from the index's table) -> not accepted (the AI, or review). A line naming a
+        // DIFFERENT card stays no evidence (a Secret Lair prints another card's line by design: the Deadpool Bolt reads GN2 42, Lightning Strike) - the
+        // server's name check behind that waits for the phone's full-card OCR
+        if (acceptance.accepted && decision.path == "image" && stripNames == "indexed_other") {
+            val named = (stripPrinting?.invoke(strip!!.set, strip.number) as? StripPrinting.Found)?.id
+            if (named != null && sameCard(named, chosen!!)) {
+                acceptance = Decide.confirmByOcr(Decide.OcrFacts(nameMatches = true, lineNames = null, stripNames = "same_card"))
+            }
+        }
         if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null, strip = strip, stripNames = stripNames)
         if (strip != null) {
             // with OCR: decide_finish on the strip's evidence (the printing's own finishes first, then the star / dot read, then the network at the OCR's box)
@@ -127,6 +139,17 @@ class PictureReader(private val index: ImageIndex) {
             strip.release()
             if (upright !== card) upright.release()
         }
+    }
+
+    /**
+     * Whether two printings of the index are the same CARD: the same oracle id (printing_check.ocr_facts' rule - never by name similarity, which takes Lightning
+     * Strike for Lightning Bolt); when either lacks one, the same name exactly. False when the table does not describe one of them
+     */
+    fun sameCard(a: String, b: String): Boolean {
+        val fa = index.facts[a] ?: return false
+        val fb = index.facts[b] ?: return false
+        if (fa.oracleId != null && fb.oracleId != null) return fa.oracleId == fb.oracleId
+        return fa.name == fb.name
     }
 
     /**

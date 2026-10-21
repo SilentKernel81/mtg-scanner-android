@@ -201,6 +201,45 @@ class PictureReaderParityTest {
         assertTrue("${problems.size} differences from the server:\n${problems.joinToString("\n")}", problems.isEmpty())
     }
 
+    /**
+     * A collector line naming ANOTHER PRINTING OF THE SAME CARD refuses a decision by the picture alone (a Codex review of 2026-10-21: it was let through,
+     * and the picture's printing A added where the line said B) - the strip's half of the server's confirm_by_ocr. A line naming a different card does not
+     * (a Secret Lair's printed line), nor the chosen printing itself. On real captures: one the picture decides alone and whose strip has a whole line, the
+     * card data's answer for that line replaced by each kind of printing.
+     */
+    @Test fun aLineNamingAnotherPrintingOfTheSameCardRefusesThePictureAlone() {
+        val reference = JSONObject(asset("reference.json").use { String(it.readBytes()) })
+        val index = index()
+        val reader = PictureReader(index)
+        val textReader = com.cardscanner.reading.TextReader.load(instrumentation.targetContext)!!
+        val cases = reference.getJSONArray("cases").let { a -> List(a.length()) { a.getJSONObject(it) } }
+        val skip = setOf("phone-0240eb84_1041_1792505189.png", "phone-0240eb84_110_1792204606.png")
+        // the picture alone decided, the strip read a whole line, and the chosen card has another printing in the index
+        val case = cases.first { c ->
+            val w = c.getJSONObject("with_strip")
+            val chosen = w.getJSONObject("decision").optString("printing_id")
+            c.getString("picture") !in skip && w.getBoolean("accepted") && w.getJSONObject("decision").getString("path") == "image" &&
+                w.getJSONObject("strip").getString("number").isNotEmpty() && w.getJSONObject("strip").getString("set").isNotEmpty() &&
+                index.ids.any { it != chosen && reader.sameCard(it, chosen) }
+        }
+        val chosen = case.getJSONObject("with_strip").getJSONObject("decision").getString("printing_id")
+        val sameCard = index.ids.first { it != chosen && reader.sameCard(it, chosen) }
+        val otherCard = index.ids.first { it != chosen && !reader.sameCard(it, chosen) && index.facts.containsKey(it) }
+        fun readWith(named: String): PictureReader.Reading {
+            val picture = rgba(case.getString("picture"))
+            try {
+                return reader.read(picture, acceptImageAlone = true, indexCovers = true, inData = { true }, textReader = textReader,
+                    stripPrinting = { _, _ -> PictureReader.StripPrinting.Found(named) })
+            } finally { picture.release() }
+        }
+        val refused = readWith(sameCard)
+        assertEquals("another printing of the same card (${index.facts[sameCard]?.name}): not accepted", false, refused.acceptance.accepted)
+        assertEquals(com.cardscanner.reading.Decide.OCR_DID_NOT_CONFIRM, refused.acceptance.refused)
+        assertEquals(null, refused.printingId)
+        assertEquals("a different card's line is no evidence (a Secret Lair)", chosen, readWith(otherCard).printingId)
+        assertEquals("the chosen printing itself", chosen, readWith(chosen).printingId)
+    }
+
     @Test fun anIndexThatDoesNotHoldTogetherIsNoIndex() {
         val folder = File(instrumentation.targetContext.cacheDir, "picture_index_broken")
         copyIndex(folder)
