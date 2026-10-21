@@ -170,6 +170,17 @@ class PictureFirstTest {
         assertNotNull(guess)
         assertEquals(notSettled.getJSONArray("candidates").getJSONObject(0).getString("id"), guess!!.suggestedId)
 
+        // one the picture settles whose finish nothing reads (printed in both, the network not sure, the AI off): waits for review with its printing - never
+        // added as regular (the owner's choice, 2026-10-21)
+        val unread = cases.first { !it.isNull("added") && it.optJSONObject("finish")?.getString("finish") == "unknown" }
+        val three = bitmap(unread.getString("picture"))
+        assertTrue(viewModel.identify(three, three))
+        await("the third card to go to review") { viewModel.scans.value.size == 3 && viewModel.scans.value.first().reviewId != null }
+        val third = viewModel.scans.value.first()
+        assertNull("added although its finish is unknown", third.inventoryId)
+        assertEquals(unread.getString("added"), third.printing?.id)
+        assertEquals("Finish not read: foil or non-foil?", viewModel.review.value.first { it.id == third.reviewId }.reason)
+
         assertEquals("network requests (the AI is off, the picture needs none)", 0, requests.get())
     }
 }

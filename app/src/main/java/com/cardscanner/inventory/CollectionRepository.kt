@@ -277,7 +277,11 @@ internal class CollectionRepository(
     suspend fun settleCapture(id: Long, card: Bitmap, reading: CardReading, marker: Foil,
                               result: ScanResult, captureId: String, settings: AppSettings, reviewOnly: Boolean = false) {
         inventoryMutex.withLock {
-            val added = if (!reviewOnly && settings.autoAdd && result.printing?.confirmed == true)
+            // A confirmed printing is added - when its finish is known: FinishPolicy gives none (null) for a printing made in foil and non-foil whose
+            // marker nothing read; such a card waits for review with its printing filled in, instead of being added as regular (the owner's choice of
+            // 2026-10-21, the same rule as the server's Game.finish_known: a confetti foil the marker reading missed had gone in as regular)
+            val finishKnown = result.foil != null
+            val added = if (!reviewOnly && settings.autoAdd && result.printing?.confirmed == true && finishKnown)
                 inventory.add(result.printing, result.finish, operationId = "capture:$captureId") else null
             history.update { list -> list.map { if (it.id == id) result.copy(inventoryId = added) else it } }
             if (added != null) {
@@ -286,6 +290,7 @@ internal class CollectionRepository(
             } else {
                 val why = if (reviewOnly) result.printing?.let { "Photo import: check (matched by ${it.match.replace('_', ' ')})" } ?: "Photo import: not found on Scryfall"
                     else if (!settings.autoAdd && result.printing != null) "Waiting for Add"
+                    else if (result.printing?.confirmed == true && !finishKnown) "Finish not read: foil or non-foil?"
                     else result.printing?.let { "Check: matched by ${it.match.replace('_', ' ')}" } ?: "Not found on Scryfall"
                 queueForReviewLocked(id, card, reading, marker, result.printing, why, captureId,
                     pendingAdd = !reviewOnly && !settings.autoAdd && result.printing != null)
