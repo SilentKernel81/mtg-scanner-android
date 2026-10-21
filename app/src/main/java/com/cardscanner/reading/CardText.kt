@@ -159,6 +159,22 @@ object CardText {
         return null
     }
 
+    /**
+     * The collector numbers to look a collector line's number up by, group after group (printing_check.printing_named_by_line): a number with a LETTER
+     * SUFFIX ("233a", "0245p") first as written - leading zeros off, then as read - and only then by its digits (database.collector_number_variants: "0330"
+     * may be "330", "0330", "330s", "0330s"), for a suffix the OCR misread. The digits alone took "233a" for "233" - ZEN has both Plains (a Codex review of
+     * 2026-10-21). No digit at all: nothing to look up
+     */
+    fun lineNumbers(number: String): List<List<String>> {
+        val read = strip(number)
+        val digits = Regex("[0-9]+").find(read)?.value ?: return emptyList()
+        val base = digits.trimStart('0').ifEmpty { "0" }
+        val variants = listOf(base, digits, base + "s", digits + "s").distinct()
+        if (read.all { it in '0'..'9' }) return listOf(variants)
+        val plain = read.replace(Regex("^0+(?=[0-9])"), "")
+        return listOf(listOf(plain, read).distinct(), variants)
+    }
+
     /** foil_marker.set_line_box: the set line's box, or null */
     fun setLineBox(lines: List<Line>): List<TextMath.Point>? = setLine(lines)?.box
 

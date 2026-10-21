@@ -8,6 +8,7 @@ import com.cardscanner.ai.CardReading
 import com.cardscanner.ai.Foil
 import com.cardscanner.inventory.CollectionRepository
 import com.cardscanner.inventory.FinishPolicy
+import com.cardscanner.reading.CardText
 import com.cardscanner.reading.PictureIndexRepository
 import com.cardscanner.reading.PictureReader
 import com.cardscanner.scryfall.CardDatabase
@@ -192,17 +193,12 @@ internal class CaptureProcessor(
     private val textReader by lazy { com.cardscanner.reading.TextReader.load(appContext) }
 
     /**
-     * What the card data has at the set and number the strip's OCR read (PrintingCheck._strip_printing: database.get_card_by_set_number with its number
-     * variants - "0330" may be "330", "0330", "330s", "0330s")
+     * What the card data has at the set and number the strip's OCR read (PrintingCheck._strip_printing through printing_named_by_line): the number's groups
+     * (CardText.lineNumbers - a letter suffix kept first: "233a" is not "233"), the first group that finds a printing
      */
     private fun stripPrinting(data: CardDatabase, set: String, number: String): PictureReader.StripPrinting = try {
-        val digits = Regex("\\d+").find(number)?.value
-        if (digits == null) PictureReader.StripPrinting.NotFound
-        else {
-            val base = digits.trimStart('0').ifEmpty { "0" }
-            data.bySetNumber(set, listOf(base, digits, base + "s", digits + "s").distinct())?.let { PictureReader.StripPrinting.Found(it.id) }
-                ?: PictureReader.StripPrinting.NotFound
-        }
+        CardText.lineNumbers(number).firstNotNullOfOrNull { group -> data.bySetNumber(set, group) }?.let { PictureReader.StripPrinting.Found(it.id) }
+            ?: PictureReader.StripPrinting.NotFound
     } catch (e: Exception) {
         PictureReader.StripPrinting.Failed
     }

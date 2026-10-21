@@ -44,6 +44,22 @@ class CardTextTest {
         }
     }
 
+    @Test fun aLetterSuffixIsLookedUpWithItFirst() {
+        // (a Codex review of 2026-10-21: ZEN has Plains 233 AND 233a - the digits alone took a line saying 233a for the chosen 233, hiding the contradiction)
+        assertEquals(listOf(listOf("233a"), listOf("233", "233s")), CardText.lineNumbers("233a"))
+        assertEquals(listOf(listOf("233a", "0233a"), listOf("233", "0233", "233s", "0233s")), CardText.lineNumbers("0233a"))
+        assertEquals(listOf(listOf("233", "233s")), CardText.lineNumbers("233"))                      // digits alone: as before
+        assertEquals(listOf(listOf("330", "0330", "330s", "0330s")), CardText.lineNumbers("0330"))
+        assertEquals(emptyList<List<String>>(), CardText.lineNumbers("abc"))
+        // the lookup that takes the first group that finds a printing: 233a finds the suffixed Plains, 233z (no such printing) the plain one
+        val plains = mapOf("233" to "p233", "233a" to "p233a")
+        fun named(number: String) = CardText.lineNumbers(number).firstNotNullOfOrNull { group -> group.firstNotNullOfOrNull { plains[it] } }
+        assertEquals("p233a", named("233a"))
+        assertEquals("p233a", named("0233a"))
+        assertEquals("p233", named("233"))
+        assertEquals("p233", named("233z"))
+    }
+
     @Test fun theFileHasTheCasesThatMatter() {
         // a sanity check of the reference itself: real lines of both kinds, and the hand-written edge cases
         val names = cases.map { it.getString("name") }
