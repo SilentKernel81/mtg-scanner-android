@@ -1,0 +1,160 @@
+package com.cardscanner.reading
+
+/**
+ * What the OCR's lines say about a Magic card: ports of the scanner server's parsers, exactly - core/card_ocr.py (parse_magic, parse_strip, MAGIC_NUMBER,
+ * MAGIC_NUMBER_OF_TOTAL, MAGIC_SET, DIGIT_LOOKALIKES, prints_token_letter, token_set_code, STARS / DOTS) and core/foil_marker.py (set_line, set_line_box,
+ * symbol_read). The JVM test CardTextTest gives them light-ocr's real lines of 30 pictures and hand-written ones, and they must answer as the Python does
+ * (app/src/test/resources/ocr_reference.py -> ocr_parser_reference.json).
+ *
+ * Python's `re` and Kotlin's Regex differ in two places that matter here, both handled:
+ *  - in Python 3, `\s` and `\b` on a str are Unicode-aware (a no-break space is a space); Java's are ASCII unless the pattern says (?U) - every pattern
+ *    below that uses them starts with (?U) (UNICODE_CHARACTER_CLASS);
+ *  - `pattern.match(text)` anchors at the START of the text (not its end): Regex.matchAt(text, 0).
+ * The parser is strict on purpose (the server's CLAUDE.md: a looser collector-number pattern once confirmed the wrong printing): never loosen it here alone.
+ */
+object CardText {
+    /** One OCR line, as the server's reader answers it: its text, confidence and box (four corners, clockwise from the top-left, in the picture's pixels) */
+    data class Line(val text: String, val confidence: Double, val box: List<TextMath.Point>)
+
+    /** parse_magic's answer: name, collector number (as printed: "0172"), set code (upper case, as printed; a token's "T" + it), foil ("foil" / "non-foil" / "unknown") */
+    data class MagicRead(val name: String, val collectorNumber: String, val setCode: String, val foil: String)
+
+    /** card_ocr.LANGUAGES: the language codes printed after the set code ("HOB • EN") */
+    private const val LANGUAGES = "EN|DE|FR|IT|ES|SP|PT|JP|JA|KO|KR|RU|CS|CT|ZHS|ZHT|PH"
+
+    /** card_ocr.MAGIC_NUMBER: "U 0172", "M0128", "M.0010", "P 0003 Play Promo" - a rarity letter then 3-4 digits (or their look-alikes), or 4 digits alone */
+    val MAGIC_NUMBER = Regex("""(?U)(?:[A-Z][. ]?\s*([0-9OoDBIlSZ]{3,4}[a-z]?)|([0-9OoDBIlSZ]{4}[a-z]?))(?=\s|$)""")
+
+    /** card_ocr.MAGIC_NUMBER_OF_TOTAL: older cards' "123/281 U" (a set total of three digits) */
+    val MAGIC_NUMBER_OF_TOTAL = Regex("""(?U)(\d{1,3})\s*/\s*\d{3}(?!\d)""")
+
+    /** card_ocr.MAGIC_SET: "HOB·EN", "HOB★EN", "SPM *EN", "HOBEN", "SPM·ENLADRAWS" - the set code, then a marker and a language, or a language alone */
+    val MAGIC_SET = Regex("""(?U)([A-Z0-9]{3,4})\s*(?:([^A-Za-z0-9\s])\s*(?:$LANGUAGES)|(?:$LANGUAGES)\b)""")
+
+    /** card_ocr.DIGIT_LOOKALIKES: str.maketrans('OoDBIlSZ', '00081152') */
+    private val LOOKALIKES = mapOf('O' to '0', 'o' to '0', 'D' to '0', 'B' to '8', 'I' to '1', 'l' to '1', 'S' to '5', 'Z' to '2')
+
+    /** card_ocr.STARS, DOTS: the characters read for a foil's star and a regular card's dot */
+    private const val STARS = "*★☆"
+    private const val DOTS = "·•."
+
+    /** Python's str.strip(): Unicode whitespace off both ends (Kotlin's trim() is the same rule: Char.isWhitespace) */
+    private fun strip(text: String) = text.trim()
+
+    private fun digits(text: String) = text.count { it.isDigit() }
+
+    /** card_ocr.prints_token_letter: a MAGIC_NUMBER match of the LETTER alternative whose letter is "T" - a token ("T 0001") */
+    private fun printsTokenLetter(match: MatchResult?) = match != null && match.groups[1] != null && match.value.trimStart().startsWith("T")
+
+    /** card_ocr.token_set_code: "t" + the code, in the code's own case ("TFRA", the strip's "tfra") */
+    private fun tokenSetCode(setCode: String) = (if (setCode.firstOrNull()?.isLowerCase() == true) "t" else "T") + setCode
+
+    private fun left(line: Line, width: Int) = line.box[0].x / width
+    private fun top(line: Line, height: Int) = line.box[0].y / height
+
+    /** The collector number a line starts with (MAGIC_NUMBER with at least two real digits, the look-alikes translated), and whether it is a token's - or null */
+    private fun numberOf(text: String): Pair<String, Boolean>? {
+        val match = MAGIC_NUMBER.matchAt(text, 0)
+        val digits = match?.let { it.groups[1]?.value ?: it.groups[2]?.value }
+        if (digits != null && digits(digits) >= 2) return String(digits.map { LOOKALIKES[it] ?: it }.toCharArray()) to printsTokenLetter(match)
+        return null
+    }
+
+    /**
+     * card_ocr.parse_magic: the name, collector number, set code and foil marker of a card from its OCR lines ([width] x [height]: the picture's size), or
+     * null when no name was found. Name: the first line in the title bar (top < 16%, left < 35%, three letters in a row), stray mana symbols cut off its end;
+     * then, from the top down, the bottom-left lines (top > 84%, left < 60%): the first that reads as the collector number, then the first that reads as
+     * "SET . LANGUAGE" - its marker counts only when a star or a dot was READ
+     */
+    fun parseMagic(lines: List<Line>, width: Int, height: Int): MagicRead? {
+        val title = lines.filter { top(it, height) < 0.16 && left(it, width) < 0.35 && Regex("[A-Za-z]{3}").containsMatchIn(it.text) }
+        if (title.isEmpty()) return null
+        // min(title, key=top): the first of the topmost
+        val first = title.minByOrNull { top(it, height) }!!
+        val name = strip(first.text.replace(Regex("""[^A-Za-zÀ-ÿ0-9!?'’".)]+$"""), ""))
+        if (name.isEmpty()) return null
+        var number = ""
+        var setCode = ""
+        var foil = "unknown"
+        var token = false
+        for (line in lines.filter { top(it, height) > 0.84 && left(it, width) < 0.6 }.sortedBy { top(it, height) }) {
+            val text = strip(line.text)
+            if (number.isEmpty()) {
+                val read = numberOf(text)
+                if (read != null) { number = read.first; token = read.second; continue }
+                val total = MAGIC_NUMBER_OF_TOTAL.matchAt(text, 0)
+                if (total != null) { number = total.groupValues[1]; continue }
+            }
+            if (setCode.isEmpty()) {
+                val match = MAGIC_SET.matchAt(text, 0)
+                if (match != null) {
+                    setCode = match.groupValues[1]
+                    val marker = match.groups[2]?.value ?: ""
+                    foil = when {
+                        marker.isNotEmpty() && marker in STARS -> "foil"
+                        marker.isNotEmpty() && marker in DOTS -> "non-foil"
+                        else -> "unknown"
+                    }
+                }
+            }
+        }
+        if (token && setCode.isNotEmpty()) setCode = tokenSetCode(setCode)
+        return MagicRead(name, number, setCode, foil)
+    }
+
+    /**
+     * card_ocr.parse_strip: (number, set code) out of the lines of the bottom-left STRIP of a flat card (no position filter: only the two lines are in it) -
+     * the number without leading zeros, the set code lower case (a token's "t" + it); "" for what was not read
+     */
+    fun parseStrip(lines: List<Line>): Pair<String, String> {
+        var number = ""
+        var setCode = ""
+        var token = false
+        for (line in lines.sortedBy { it.box[0].y }) {
+            val text = strip(line.text)
+            if (number.isEmpty()) {
+                val read = numberOf(text)
+                if (read != null) { number = read.first; token = read.second; continue }
+                val total = MAGIC_NUMBER_OF_TOTAL.matchAt(text, 0)
+                if (total != null) { number = total.groupValues[1]; continue }
+            }
+            if (setCode.isEmpty()) {
+                val match = MAGIC_SET.matchAt(text, 0)
+                if (match != null) setCode = match.groupValues[1]
+            }
+        }
+        setCode = setCode.lowercase()       // Python's lower(): the code is ASCII letters and digits, the locale cannot matter (lowercase() is the invariant one)
+        if (token && setCode.isNotEmpty()) setCode = tokenSetCode(setCode)
+        return number.trimStart('0') to setCode
+    }
+
+    /**
+     * foil_marker.set_line: the line the set code is on, or null - from the top down, the first line that reads as the collector number is skipped, and the
+     * first line after it (or before it, when none matched yet) that reads as "SET . LANGUAGE" is it
+     */
+    fun setLine(lines: List<Line>): Line? {
+        var numberSeen = false
+        for (line in lines.sortedBy { it.box[0].y }) {
+            val text = strip(line.text)
+            if (!numberSeen && (numberOf(text) != null || MAGIC_NUMBER_OF_TOTAL.matchAt(text, 0) != null)) {
+                numberSeen = true
+                continue
+            }
+            if (MAGIC_SET.matchAt(text, 0) != null) return line
+        }
+        return null
+    }
+
+    /** foil_marker.set_line_box: the set line's box, or null */
+    fun setLineBox(lines: List<Line>): List<TextMath.Point>? = setLine(lines)?.box
+
+    /** foil_marker.symbol_read: the marker the OCR itself read on a set line - "foil" (a star), "non-foil" (a dot) or "unknown" (none read: says nothing) */
+    fun symbolRead(line: Line): String {
+        val symbol = MAGIC_SET.matchAt(strip(line.text), 0)?.groups?.get(2)?.value ?: ""
+        return when {
+            symbol.isNotEmpty() && symbol in STARS -> "foil"
+            symbol.isNotEmpty() && symbol in DOTS -> "non-foil"
+            else -> "unknown"
+        }
+    }
+}
