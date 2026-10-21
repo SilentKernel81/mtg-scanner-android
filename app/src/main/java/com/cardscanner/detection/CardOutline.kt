@@ -1,6 +1,7 @@
 package com.cardscanner.detection
 
 import org.opencv.core.Core
+import org.opencv.geometry.Geometry
 import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.MatOfInt
@@ -57,7 +58,7 @@ private fun orderCorners(pts: List<Pt>): Corners {
 
 internal fun boxCorners(rect: org.opencv.core.RotatedRect): Corners {
     val box = Mat()
-    Imgproc.boxPoints(rect, box)
+    Geometry.boxPoints(rect, box)
     val pts = (0 until 4).map { Pt(box.get(it, 0)[0], box.get(it, 1)[0]) }
     box.release()
     return orderCorners(pts)
@@ -171,16 +172,16 @@ private fun outlineFromEdgeGroups(edges: Mat, gray: Mat, minArea: Double, allowL
     for ((_, groupPoints) in points) {
         val all = MatOfPoint(*groupPoints.toTypedArray())
         val hullIndices = MatOfInt()
-        Imgproc.convexHull(all, hullIndices)
+        Geometry.convexHull(all, hullIndices)
         val hull = hullIndices.toArray().map { groupPoints[it] }
         all.release(); hullIndices.release()
-        val corners = boxCorners(Imgproc.minAreaRect(MatOfPoint2f(*hull.toTypedArray())))
+        val corners = boxCorners(Geometry.minAreaRect(MatOfPoint2f(*hull.toTypedArray())))
         val sideW = (corners[1] - corners[0]).norm()
         val sideH = (corners[3] - corners[0]).norm()
         if (min(sideW, sideH) == 0.0 || (sideW > sideH && !allowLandscape)) continue
         val area = sideW * sideH
         val ratio = max(sideW, sideH) / min(sideW, sideH)
-        val fill = Imgproc.contourArea(MatOfPoint2f(*hull.toTypedArray())) / area
+        val fill = Geometry.contourArea(MatOfPoint2f(*hull.toTypedArray())) / area
         if (abs(ratio - CARD_ASPECT_RATIO) / CARD_ASPECT_RATIO > ratioTolerance || fill < 0.9) continue
         if ((best != null && area <= best.area) || perimeterCoverage(edges, corners) < 0.8) continue
         if (isInnerFrame(gray, corners)) continue
@@ -209,7 +210,7 @@ private fun fitSide(points: List<Pt>, start: Pt, end: Pt, band: Int): Line? {
     if (kept.size < 10) return null
     val mat = MatOfPoint2f(*kept.map { Point(it.x, it.y) }.toTypedArray())
     val line = Mat()
-    Imgproc.fitLine(mat, line, Imgproc.DIST_HUBER, 0.0, 0.01, 0.01)
+    Geometry.fitLine(mat, line, Geometry.DIST_HUBER, 0.0, 0.01, 0.01)
     val v = FloatArray(4).also { line.get(0, 0, it) }
     mat.release(); line.release()
     return Line(Pt(v[2].toDouble(), v[3].toDouble()), Pt(v[0].toDouble(), v[1].toDouble()))
@@ -326,9 +327,9 @@ fun findCardOutline(frame: Mat, allowLandscape: Boolean = false, ratioTolerance:
 
         var best: Candidate? = null
         for (contour in contours) {
-            val area = Imgproc.contourArea(contour)
+            val area = Geometry.contourArea(contour)
             if (area < minArea) continue
-            val corners = boxCorners(Imgproc.minAreaRect(MatOfPoint2f(*contour.toArray())))
+            val corners = boxCorners(Geometry.minAreaRect(MatOfPoint2f(*contour.toArray())))
             val sideW = (corners[1] - corners[0]).norm()
             val sideH = (corners[3] - corners[0]).norm()
             if (min(sideW, sideH) == 0.0) continue
@@ -373,7 +374,7 @@ fun warpCard(frame: Mat, corners: Corners, outH: Int? = null): Mat {
     val width = (height / CARD_ASPECT_RATIO).toInt()
     val src = MatOfPoint2f(*listOf(tl, tr, br, bl).toPoints())
     val dst = MatOfPoint2f(Point(0.0, 0.0), Point(width - 1.0, 0.0), Point(width - 1.0, height - 1.0), Point(0.0, height - 1.0))
-    val transform = Imgproc.getPerspectiveTransform(src, dst)
+    val transform = Geometry.getPerspectiveTransform(src, dst)
     val out = Mat()
     Imgproc.warpPerspective(frame, out, transform, Size(width.toDouble(), height.toDouble()))
     listOf(src, dst, transform).forEach { it.release() }

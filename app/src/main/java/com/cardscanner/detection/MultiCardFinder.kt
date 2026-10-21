@@ -1,6 +1,7 @@
 package com.cardscanner.detection
 
 import org.opencv.core.Mat
+import org.opencv.geometry.Geometry
 import org.opencv.core.MatOfPoint
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
@@ -41,9 +42,9 @@ object MultiCardFinder {
             val minArea = 0.004 * small.rows() * small.cols()  // a card may be 1/100 of the photo (a 10x10 page)
             val found = ArrayList<Corners>()
             for (contour in contours) {
-                val area = Imgproc.contourArea(contour)
+                val area = Geometry.contourArea(contour)
                 if (area < minArea) continue
-                val corners = boxCorners(Imgproc.minAreaRect(MatOfPoint2f(*contour.toArray())))
+                val corners = boxCorners(Geometry.minAreaRect(MatOfPoint2f(*contour.toArray())))
                 val sideW = (corners[1] - corners[0]).norm()
                 val sideH = (corners[3] - corners[0]).norm()
                 if (min(sideW, sideH) == 0.0) continue

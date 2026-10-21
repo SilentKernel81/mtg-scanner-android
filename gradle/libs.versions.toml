@@ -9,9 +9,9 @@ camerax = "1.6.2"
 coroutines = "1.11.0"
 okhttp = "5.5.0"
 coil = "3.6.3"
-opencv = "4.14.0"
-# The OCR's recognizer (assets/ocr/rec.onnx): its input width varies with the line, which OpenCV 4.14's dnn importer refuses (OcrModelsLoadTest, 2026-10-21)
-onnxruntime = "1.30.0"
+# 5.0 (2026-10-21; 4.14 before): its dnn importer loads the OCR's recognizer (assets/ocr/rec.onnx, whose input width follows the line), which 4.14 refused -
+# so no second inference engine (onnxruntime was 31.5 MB of native library). Its geometry functions moved from Imgproc to org.opencv.geometry.Geometry
+opencv = "5.0.0.1"
 testRunner = "1.7.0"
 testJunit = "1.3.0"
 junit = "4.13.2"
@@ -34,7 +34,6 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 opencv = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
-onnxruntime = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "testRunner" }
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "testJunit" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

@@ -17,12 +17,16 @@ import org.opencv.dnn.Net
 import java.security.MessageDigest
 
 /**
- * Step 0 of the server's docs/plans/ANDROID_OCR_PLAN.md: do light-ocr's two networks (PaddleOCR PP-OCRv6 small - assets/ocr/det.onnx, rec.onnx, copies of the
- * bundle the server's OCR reader uses) load in the app's OpenCV 4.14 dnn module on the phone, and give the shapes measured on the desktop (OpenCV 5.0)?
- *   det 1x3xHxW -> a probability map 1x1xHxW, at two sizes (dynamic input);
- *   rec 1x3x48xW -> 1 x (W/8) x 18710 (blank + the dictionary's 18,709 characters), a softmax (each step's row sums to 1), at two widths.
- * The inputs are zeros (only the shapes and that it runs are asked here; the answers are the later steps' parity tests). Logs each forward's time. Temporary:
- * it becomes part of TextReaderParityTest (step 3).
+ * Step 0 of the server's docs/plans/ANDROID_OCR_PLAN.md: light-ocr's two networks (PaddleOCR PP-OCRv6 small - assets/ocr/det.onnx, rec.onnx, copies of the
+ * bundle the server's OCR reader uses) load in the app's OpenCV dnn module on the phone and give the shapes measured on the desktop:
+ *   det 1x3xHxW -> a probability map 1x1xHxW, at three sizes (dynamic input);
+ *   rec 1x3x48xW -> 1 x (W/8) x 18710 (blank + the dictionary's 18,709 characters), a softmax (each step's row sums to 1), at three widths.
+ * The inputs are zeros (only the shapes, the softmax and that it runs are asked here; the answers are the later steps' parity tests). Logs each forward's time.
+ *
+ * History (the owner's Pixel 10, 2026-10-21): OpenCV 4.14 REFUSED the recognizer ("Node [Shape]: !isDynamicShape" - its input width follows the line), so
+ * it first ran on onnxruntime-android 1.30.0 (31.5 MB of native library); OpenCV 5.0.0.1 loads it, and gives onnxruntime's answers on a random input to
+ * 2.3e-5 of a probability with the same character at every step (320 / 640 / 1280 wide: dnn 71 / 125 / 212 ms, onnxruntime 42 / 62 / 104 ms) - so the app
+ * runs both networks on OpenCV 5 and has no second engine. The detector is faster on 5.0 (a strip-sized 640 x 192 input: 38 ms, 97 on 4.14).
  *   adb shell am instrument -w -e class com.cardscanner.OcrModelsLoadTest com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner
  */
 @RunWith(AndroidJUnit4::class)
@@ -52,7 +56,7 @@ class OcrModelsLoadTest {
         val recBytes = bytes("rec.onnx")
         assertEquals("d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e", sha256(detBytes))
         assertEquals("5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634", sha256(recBytes))
-        val report = StringBuilder()
+        val report = StringBuilder("OpenCV ${org.opencv.core.Core.VERSION}\n")
 
         var t = System.nanoTime()
         val det = Dnn.readNetFromONNX(MatOfByte(*detBytes))
@@ -64,37 +68,18 @@ class OcrModelsLoadTest {
             report.append("det 1x3x${h}x$w -> ${shape.joinToString("x")} in $ms ms\n")
         }
 
-        // OpenCV 4.14 refuses the recognizer (a Shape node on a dynamic input: its width follows the line) - recorded here, and onnxruntime is asked instead
-        val refused = try { Dnn.readNetFromONNX(MatOfByte(*recBytes)); null } catch (e: Exception) { e.message?.substringAfter("error: ")?.take(120) }
-        report.append("rec in OpenCV dnn: ${refused ?: "loads"}\n")
-        recOnOnnxRuntime(recBytes, report)
-        android.util.Log.i("Scanner", "OcrModelsLoadTest:\n$report")
-    }
-
-    /** The recognizer on onnxruntime (the plan's fallback route): it loads, and 1x3x48xW gives 1 x W/8 x 18710, a softmax, at two widths */
-    private fun recOnOnnxRuntime(recBytes: ByteArray, report: StringBuilder) {
-        val env = ai.onnxruntime.OrtEnvironment.getEnvironment()
-        var t = System.nanoTime()
-        val session = env.createSession(recBytes, ai.onnxruntime.OrtSession.SessionOptions())
-        report.append("rec loaded in onnxruntime in ${(System.nanoTime() - t) / 1_000_000} ms; input ${session.inputNames}, output ${session.outputNames}\n")
-        val inputName = session.inputNames.first()
+        t = System.nanoTime()
+        val rec = Dnn.readNetFromONNX(MatOfByte(*recBytes))
+        report.append("rec loaded in ${(System.nanoTime() - t) / 1_000_000} ms\n")
         for (w in listOf(320, 640, 1280)) {
-            val data = java.nio.FloatBuffer.allocate(3 * 48 * w)
-            ai.onnxruntime.OnnxTensor.createTensor(env, data, longArrayOf(1, 3, 48, w.toLong())).use { input ->
-                t = System.nanoTime()
-                session.run(mapOf(inputName to input)).use { result ->
-                    val ms = (System.nanoTime() - t) / 1_000_000
-                    val out = result[0] as ai.onnxruntime.OnnxTensor
-                    val shape = out.info.shape
-                    assertArrayEquals("rec at 48x$w", longArrayOf(1, (w / 8).toLong(), 18710), shape)
-                    val probabilities = out.floatBuffer
-                    var sum = 0.0
-                    for (i in 0 until 18710) sum += probabilities.get(i)
-                    assertEquals("rec's first step sums to 1", 1.0, sum, 1e-3)
-                    report.append("rec (onnxruntime) 1x3x48x$w -> ${shape.joinToString("x")} in $ms ms\n")
-                }
-            }
+            val (shape, out, ms) = forward(rec, intArrayOf(1, 3, 48, w))
+            assertArrayEquals("rec at 48x$w", intArrayOf(1, w / 8, 18710), shape)
+            val row = FloatArray(18710)                                   // a softmax: the first step's probabilities sum to 1
+            out.reshape(1, shape[1] * shape[2]).get(0, 0, row)
+            assertEquals("rec's first step sums to 1", 1.0, row.sum().toDouble(), 1e-3)
+            out.release()
+            report.append("rec 1x3x48x$w -> ${shape.joinToString("x")} in $ms ms\n")
         }
-        session.close()
+        android.util.Log.i("Scanner", "OcrModelsLoadTest:\n$report")
     }
 }
