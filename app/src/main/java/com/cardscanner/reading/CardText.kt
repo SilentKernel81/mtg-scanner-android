@@ -7,8 +7,10 @@ package com.cardscanner.reading
  * (app/src/test/resources/ocr_reference.py -> ocr_parser_reference.json).
  *
  * Python's `re` and Kotlin's Regex differ in two places that matter here, both handled:
- *  - in Python 3, `\s` and `\b` on a str are Unicode-aware (a no-break space is a space); Java's are ASCII unless the pattern says (?U) - every pattern
- *    below that uses them starts with (?U) (UNICODE_CHARACTER_CLASS);
+ *  - in Python 3, `\s`, `\d` and `\b` on a str are Unicode-aware (a no-break space is a space). On a phone (ICU) they are too, on a desktop JVM they are
+ *    ASCII - and the flag that would change that, (?U), is REFUSED by Android's regex engine (a Codex review of 2026-10-21: the parsers would not even
+ *    start on a phone, while the JVM tests passed). So no pattern here uses `\s`, `\d` or `\b`: they are spelled out as Python's classes ([WS],
+ *    `\p{Nd}`, [WORD_END]), which both engines read alike - CardTextTest runs the cases on the JVM, CardTextParityTest the same cases on the phone;
  *  - `pattern.match(text)` anchors at the START of the text (not its end): Regex.matchAt(text, 0).
  * The parser is strict on purpose (the server's CLAUDE.md: a looser collector-number pattern once confirmed the wrong printing): never loosen it here alone.
  */
@@ -19,17 +21,29 @@ object CardText {
     /** parse_magic's answer: name, collector number (as printed: "0172"), set code (upper case, as printed; a token's "T" + it), foil ("foil" / "non-foil" / "unknown") */
     data class MagicRead(val name: String, val collectorNumber: String, val setCode: String, val foil: String)
 
+    /**
+     * The characters Python's `\s` matches on a str (str.isspace()), inside a character class: the ASCII control spaces, \x1c-\x1f, \x85 and every
+     * Unicode space separator (\p{Z}: the no-break space, U+1680, U+2000-200A, U+2028/2029, U+202F, U+205F, U+3000)
+     */
+    private const val SPACES = """\t\n\x0B\f\r\x1C-\x1F\x85\p{Z}"""
+
+    /** Python's `\s` */
+    private const val WS = "[$SPACES]"
+
+    /** Python's `\b` after a word: not followed by a word character (Python's \w on a str: a letter, a number, or "_") */
+    private const val WORD_END = """(?![\p{L}\p{Nd}\p{Nl}\p{No}_])"""
+
     /** card_ocr.LANGUAGES: the language codes printed after the set code ("HOB • EN") */
     private const val LANGUAGES = "EN|DE|FR|IT|ES|SP|PT|JP|JA|KO|KR|RU|CS|CT|ZHS|ZHT|PH"
 
     /** card_ocr.MAGIC_NUMBER: "U 0172", "M0128", "M.0010", "P 0003 Play Promo" - a rarity letter then 3-4 digits (or their look-alikes), or 4 digits alone */
-    val MAGIC_NUMBER = Regex("""(?U)(?:[A-Z][. ]?\s*([0-9OoDBIlSZ]{3,4}[a-z]?)|([0-9OoDBIlSZ]{4}[a-z]?))(?=\s|$)""")
+    val MAGIC_NUMBER = Regex("""(?:[A-Z][. ]?$WS*([0-9OoDBIlSZ]{3,4}[a-z]?)|([0-9OoDBIlSZ]{4}[a-z]?))(?=$WS|$)""")
 
-    /** card_ocr.MAGIC_NUMBER_OF_TOTAL: older cards' "123/281 U" (a set total of three digits) */
-    val MAGIC_NUMBER_OF_TOTAL = Regex("""(?U)(\d{1,3})\s*/\s*\d{3}(?!\d)""")
+    /** card_ocr.MAGIC_NUMBER_OF_TOTAL: older cards' "123/281 U" (a set total of three digits; Python's \d: \p{Nd}) */
+    val MAGIC_NUMBER_OF_TOTAL = Regex("""(\p{Nd}{1,3})$WS*/$WS*\p{Nd}{3}(?!\p{Nd})""")
 
     /** card_ocr.MAGIC_SET: "HOB·EN", "HOB★EN", "SPM *EN", "HOBEN", "SPM·ENLADRAWS" - the set code, then a marker and a language, or a language alone */
-    val MAGIC_SET = Regex("""(?U)([A-Z0-9]{3,4})\s*(?:([^A-Za-z0-9\s])\s*(?:$LANGUAGES)|(?:$LANGUAGES)\b)""")
+    val MAGIC_SET = Regex("""([A-Z0-9]{3,4})$WS*(?:([^A-Za-z0-9$SPACES])$WS*(?:$LANGUAGES)|(?:$LANGUAGES)$WORD_END)""")
 
     /** card_ocr.DIGIT_LOOKALIKES: str.maketrans('OoDBIlSZ', '00081152') */
     private val LOOKALIKES = mapOf('O' to '0', 'o' to '0', 'D' to '0', 'B' to '8', 'I' to '1', 'l' to '1', 'S' to '5', 'Z' to '2')

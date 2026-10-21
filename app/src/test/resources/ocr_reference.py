@@ -14,7 +14,8 @@ What it writes (never edit these by hand - run this again):
   app/src/test/resources/ocr_parser_reference.json
         LINES light-ocr really read on 30 pictures (the card and its strip: texts and boxes) and hand-written ones (a token, 123/281, look-alike digits, a
         name with stray mana symbols, a star, a dot, Unicode spaces) with what the server's parsers make of them: parse_magic, parse_strip, set_line's
-        index, symbol_read - the Kotlin parsers must give exactly these
+        index, symbol_read - the Kotlin parsers must give exactly these; a COPY in app/src/androidTest/assets/parity/ for CardTextParityTest (the same cases
+        on the phone: its regex engine is ICU, not the JVM's - a Codex review of 2026-10-21)
 """
 import hashlib
 import json
@@ -142,5 +143,6 @@ for name, lines in hand:
     '_note': 'Made by ocr_reference.py: light-ocr\'s real lines of 30 pictures (the card and its strip) and hand-written ones, with the answers of the '
              'server\'s card_ocr.parse_magic / parse_strip and foil_marker.set_line / symbol_read - never edit by hand.',
     'cases': parser_cases}, indent=1, ensure_ascii=False))
+shutil.copyfile(RESOURCES / 'ocr_parser_reference.json', ANDROID / 'app/src/androidTest/assets/parity/ocr_parser_reference.json')
 print(f"{len(grow_cases)} grow, {len(clockwise_cases)} clockwise, {len(order_cases)} reading-order, {len(width_cases)} width, {len(ctc_cases)} CTC cases; "
       f"{len(parser_cases)} parser cases")
