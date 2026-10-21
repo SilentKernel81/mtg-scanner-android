@@ -26,7 +26,7 @@ class ImageIndexTest {
         File(folder, "hashes-g1.bin").writeBytes(hashes)
         File(folder, "ids-g1.txt").writeText(ids)
         val rows = table ?: (listOf(ImageIndex.TABLE_COLUMNS.joinToString("\t")) +
-            (0 until count).map { "id-$it\tset$it\t$it\toracle-$it\tnonfoil,foil\tCard $it" }).joinToString("\n") + "\n"
+            (0 until count).map { "id-$it\tset$it\t$it\toracle-$it\tnonfoil,foil\tCard $it\t2024-0$it-01\t2015" }).joinToString("\n") + "\n"
         File(folder, ImageIndex.PRINTINGS).outputStream().use { out -> GZIPOutputStream(out).use { it.write(rows.toByteArray()) } }
         File(folder, ImageIndex.MANIFEST).writeText(JSONObject()
             .put("descriptor", descriptor).put("count", count).put("hash_bytes", ImageIndex.HASH_BYTES).put("built", "2026-10-21 12:00:00")
@@ -42,7 +42,19 @@ class ImageIndexTest {
         assertEquals("g1", index.generation)
         assertEquals(1, index.row("id-1"))
         assertNull(index.row("id-9"))
-        assertEquals(ImageIndex.Facts("set2", "2", "oracle-2", listOf("nonfoil", "foil"), "Card 2"), index.facts["id-2"])
+        assertEquals(ImageIndex.Facts("set2", "2", "oracle-2", listOf("nonfoil", "foil"), "Card 2", "2024-02-01", "2015"), index.facts["id-2"])
+        assertEquals(true, index.facts["id-2"]!!.printsAMarker)
+        assertEquals(false, index.facts["id-2"]!!.copy(frame = "1997").printsAMarker)            // a retro frame prints the old collector line
+        assertEquals(false, index.facts["id-2"]!!.copy(releasedAt = "2023-06-22").printsAMarker)  // before The Lord of the Rings
+    }
+
+    @Test fun aTableOfBeforeTheMarkerColumnsStillLoads() {
+        // the six columns the server served until 2026-10-21: read by name, the marker columns missing - no marker reading, nothing else changes
+        val old = (listOf(ImageIndex.TABLE_COLUMNS.take(6).joinToString("\t")) + (0 until 3).map { "id-$it\ts\t$it\to\tnonfoil\tCard $it" }).joinToString("\n") + "\n"
+        val index = ImageIndex.load(write(table = old))
+        assertNotNull(index)
+        assertEquals(false, index!!.facts["id-1"]!!.printsAMarker)
+        assertNull(index.facts["id-1"]!!.releasedAt)
     }
 
     @Test fun theDistancesAreTheBitsThatDiffer() {

@@ -17,7 +17,8 @@ What it writes, all into app/src/androidTest/assets/picture/ - IGNORED BY GIT (a
         per picture, read back from its PNG: the search (which way up, the five nearest rows with their ids and similarities), rule A2's decision
         with an empty strip, the guards' answer (accept_printing with the picture alone allowed and the index covering the card data) and what
         live_read itself returned (the printing it would add, or null) - the phone's PictureReaderParityTest must give the same
-The finish is not compared: with no OCR the server asks the foil network at a fixed place, which the phone does not have (the plan's step 4).
+        and, since 2026-10-21, the finish: whether the server would ask the foil network at the fixed place (orientation established, every tied
+        printing prints a marker), the network's probability of the card turned upright, and live_read's own finish
 """
 import gzip
 import json
@@ -32,7 +33,7 @@ ANDROID = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(SERVER / 'src'))
 
 from card_scanner.config import Config  # noqa: E402
-from card_scanner.core import image_index, printing_check  # noqa: E402
+from card_scanner.core import foil_marker, image_index, printing_check  # noqa: E402
 from card_scanner.core.database import CardDatabase  # noqa: E402
 from card_scanner.core.reading.decide import accept_printing, decide_printing  # noqa: E402
 
@@ -56,6 +57,8 @@ ids = (INDEX / manifest['ids']).read_text().split()
 
 # --- the server's reading of each picture, OCR off ---
 check = printing_check.PrintingCheck(database, INDEX, Path('/nonexistent/printing_check.jsonl'), 'off', 'off')
+net = foil_marker.load()
+assert net is not None, 'the foil network (core/foil_net.onnx) did not load'
 cases = []
 for path in sorted(CAPTURES.glob('*.jpg')):
     bgr = cv2.imread(str(path))
@@ -70,7 +73,12 @@ for path in sorted(CAPTURES.glob('*.jpg')):
     facts = {'accept_image_alone': True, 'index_covers': True, 'in_data': bool(card), 'ocr_on': False, 'strip_names': None}
     verdict = accept_printing(decision, facts, {'image_min_similarity': printing_check.IMAGE_MIN_SIMILARITY,
                                                 'strong_min_similarity': printing_check.STRONG_MIN_SIMILARITY})
-    live = check.live_read(rgb, None, None, None, True)                  # the server's own path, to show that the pieces above are what it does
+    live = check.live_read(rgb, None, None, net, True)                   # the server's own path (OCR off, the foil network given), to show that the pieces above are what it does
+    # the finish: the network asked at the fixed place of the card turned upright, when the server would ask it (live_read's net_at_a_fixed_place)
+    asks = bool(printing_check.orientation_established(search) and check.marker_expected(search))
+    upright = cv2.rotate(rgb, cv2.ROTATE_180) if search['rotated'] else rgb
+    crop = foil_marker.fixed_crop(upright)
+    probability = float(net.probability(crop)) if crop is not None else None
     added = live['card']['id'] if live else None
     assert added == (decision['printing_id'] if verdict['accepted'] else None), (path.name, added, decision, verdict)
     cases.append({
@@ -83,6 +91,10 @@ for path in sorted(CAPTURES.glob('*.jpg')):
         'accepted': bool(verdict['accepted']), 'refused': verdict['refused'],
         'added': added,
         'added_name': live['card']['name'] if live else None,
+        'marker_expected': asks,
+        'net': probability,                                              # computed for every picture; the server ASKS it only where marker_expected
+        'finishes': list((card or {}).get('finishes') or []),
+        'finish': live['finish'] if live else None,                      # decide_finish's answer: {'finish', 'source'}
     })
 reference = {'_note': 'Made by picture_reference.py from the server\'s code - never edit by hand. OCR off: no strip, the picture alone allowed, the index '
                       'covering the card data.', 'generation': manifest['generation'], 'descriptor': manifest['descriptor'],

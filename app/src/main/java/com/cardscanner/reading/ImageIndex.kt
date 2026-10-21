@@ -28,8 +28,18 @@ class ImageIndex private constructor(
     /** What the decision needs of each printing, by id (rows the server's card data no longer has are missing from it - joined by id, never by position) */
     val facts: Map<String, Facts>,
 ) {
-    /** A printing as the server's printings table describes it */
-    data class Facts(val set: String, val number: String, val oracleId: String?, val finishes: List<String>, val name: String)
+    /**
+     * A printing as the server's printings table describes it. [releasedAt] and [frame] (in the table since 2026-10-21; null from an older one) say whether it
+     * prints the foil marker at all - [printsAMarker]
+     */
+    data class Facts(val set: String, val number: String, val oracleId: String?, val finishes: List<String>, val name: String,
+                     val releasedAt: String? = null, val frame: String? = null) {
+        /**
+         * printing_check.prints_a_marker: released from [MARKER_FROM] on, in the [MARKER_FRAME] frame - the printings the foil network was measured on.
+         * False for anything missing (a table from before these columns: no marker reading, the finish is decided as before)
+         */
+        val printsAMarker get() = (releasedAt ?: "") >= MARKER_FROM && frame == MARKER_FRAME
+    }
 
     private val rows: Map<String, Int> by lazy { HashMap<String, Int>(ids.size * 2).also { map -> ids.forEachIndexed { row, id -> map[id] = row } } }
 
@@ -60,8 +70,13 @@ class ImageIndex private constructor(
         private const val WORDS = HASH_BYTES / 8
         const val MANIFEST = "manifest.json"
         const val PRINTINGS = "printings.tsv.gz"
-        /** The printings table's columns, in order (image_index.TABLE_COLUMNS) */
-        val TABLE_COLUMNS = listOf("id", "set", "number", "oracle_id", "finishes", "name")
+        /** The printings table's columns (image_index.TABLE_COLUMNS), read BY NAME: the first six are required, the last two (2026-10-21) optional */
+        val TABLE_COLUMNS = listOf("id", "set", "number", "oracle_id", "finishes", "name", "released_at", "frame")
+        private val REQUIRED_COLUMNS = TABLE_COLUMNS.take(6)
+
+        /** printing_check.MARKER_FROM / MARKER_FRAME: the earliest set the OCR reads a marker on (The Lord of the Rings), in the modern frame only */
+        const val MARKER_FROM = "2023-06-23"
+        const val MARKER_FRAME = "2015"
 
         private fun toWords(bytes: ByteArray): LongArray {
             val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer()
@@ -113,13 +128,18 @@ class ImageIndex private constructor(
             val facts = HashMap<String, Facts>()
             GZIPInputStream(file.inputStream()).bufferedReader(Charsets.UTF_8).useLines { lines ->
                 val iterator = lines.iterator()
-                if (!iterator.hasNext() || iterator.next().split('\t') != TABLE_COLUMNS) return null
+                if (!iterator.hasNext()) return null
+                val header = iterator.next().split('\t')
+                if (!header.containsAll(REQUIRED_COLUMNS)) return null
+                val at = TABLE_COLUMNS.associateWith { header.indexOf(it) }          // -1: a column this table does not have
                 for (line in iterator) {
                     if (line.isEmpty()) continue
                     val f = line.split('\t')
-                    if (f.size != TABLE_COLUMNS.size) continue
-                    facts[f[0]] = Facts(set = f[1], number = f[2], oracleId = f[3].ifEmpty { null },
-                        finishes = f[4].split(',').filter { it.isNotEmpty() }, name = f[5])
+                    if (f.size != header.size) continue
+                    fun column(name: String) = at.getValue(name).let { if (it < 0) null else f[it] }
+                    facts[f[at.getValue("id")]] = Facts(set = column("set")!!, number = column("number")!!, oracleId = column("oracle_id")!!.ifEmpty { null },
+                        finishes = column("finishes")!!.split(',').filter { it.isNotEmpty() }, name = column("name")!!,
+                        releasedAt = column("released_at")?.ifEmpty { null }, frame = column("frame")?.ifEmpty { null })
                 }
             }
             return facts

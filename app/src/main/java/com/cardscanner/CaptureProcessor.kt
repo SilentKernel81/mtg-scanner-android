@@ -181,8 +181,13 @@ internal class CaptureProcessor(
 
     fun warmUp() { if (settings().askAi) scope.launch(Dispatchers.IO) { identifier().warmUp() } }
 
-    /** What the picture said of a capture: the printing to add (accepted by the guards), or only its best guess (for review), and why not */
-    private class ByPicture(val printing: Printing?, val guess: Printing?, val why: String?)
+    /** What the picture said of a capture: the printing to add (accepted by the guards), or only its best guess (for review), and why not; the marker the
+     * foil network read at the fixed place (Foil.UNKNOWN: not asked, or not sure) */
+    private class ByPicture(val printing: Printing?, val guess: Printing?, val why: String?, val marker: Foil = Foil.UNKNOWN)
+
+    // The foil network (assets/foil_net.onnx), loaded at the first card the picture decides - null when it cannot be read (the finish is then decided as before)
+    private val appContext = context.applicationContext
+    private val foilNet by lazy { com.cardscanner.reading.FoilNet.load(appContext) }
 
     /**
      * Standalone, Read by the picture first: the flat card's picture against the index (reading/PictureReader.kt - the server's reading with OCR off). Null
@@ -196,7 +201,7 @@ internal class CaptureProcessor(
         val mat = Mat()
         return try {
             Utils.bitmapToMat(foilCard, mat)                  // RGBA: Fingerprint.hash drops the alpha
-            val reading = reader.read(mat, acceptImageAlone = true, indexCovers = pictureIndex.covers()) { data.byId(it) != null }
+            val reading = reader.read(mat, acceptImageAlone = true, indexCovers = pictureIndex.covers(), inData = { data.byId(it) != null }, foilNet = foilNet)
             val accepted = reading.printingId?.let { data.byId(it) }?.copy(match = "picture")
             val guess = reading.search.candidates.firstOrNull()?.let { data.byId(it.id) }
             val why = when {
@@ -207,7 +212,15 @@ internal class CaptureProcessor(
             Log.i(TAG, "Picture: ${reading.decision.path} ${accepted?.let { "${it.name} ${it.setCode} #${it.collectorNumber}" } ?: "-"} " +
                 "(similarity ${reading.decision.similarity?.let { "%.3f".format(it) }}, lead ${reading.decision.lead?.let { "%.3f".format(it) }}" +
                 (why?.let { ", $it" } ?: "") + ")")
-            ByPicture(accepted, guess, why)
+            // the marker as the network read it - only when the finish came from it (the printing's own finishes, when they decide, are FinishPolicy's)
+            val marker = when {
+                reading.finish?.source != "network" -> Foil.UNKNOWN
+                reading.finish.finish == "foil" -> Foil.FOIL
+                reading.finish.finish == "regular" -> Foil.NON_FOIL
+                else -> Foil.UNKNOWN
+            }
+            if (reading.net != null) Log.i(TAG, "Foil network at the fixed place: %.3f -> ${reading.finish?.finish}".format(reading.net))
+            ByPicture(accepted, guess, why, marker)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {          // anything - an Error too (out of memory, a native library): the card is read as before, never lost to this
@@ -344,12 +357,15 @@ internal class CaptureProcessor(
         val picture = if (settings.pictureFirst) readByPicture(foilCard) else null
         picture?.printing?.let { printing ->
             val read = CardReading(printing.name, printing.collectorNumber, printing.setCode)
-            // The finish: the printing's own when it exists in one only; else the AI's foil check (when the AI and the foil check are on) - the phone has
-            // no reading of the marker of its own (the server's network at a fixed place needs facts the index's table does not carry yet)
+            // The finish: the printing's own when it exists in one only; else the ★ / • marker the foil network read at the fixed place (picture.marker - a
+            // recent, modern-frame card the search turned upright); else the AI's foil check (when the AI and the foil check are on); else unknown
             val both = ("foil" in printing.finishes || "etched" in printing.finishes) && "nonfoil" in printing.finishes
-            val pictureMarker = if (both && settings.askAi && settings.detectFoil && foilCard != null)
-                try { identifier().readFoilSymbol(foilCard) } catch (e: CancellationException) { throw e } catch (e: Exception) { Foil.UNKNOWN }
-                else Foil.UNKNOWN
+            val pictureMarker = when {
+                picture.marker != Foil.UNKNOWN -> picture.marker
+                both && settings.askAi && settings.detectFoil && foilCard != null ->
+                    try { identifier().readFoilSymbol(foilCard) } catch (e: CancellationException) { throw e } catch (e: Exception) { Foil.UNKNOWN }
+                else -> Foil.UNKNOWN
+            }
             val (foil, reason) = FinishPolicy.suggest(printing, pictureMarker)
             val result = ScanResult(id, thumbnail, ScanResult.Status.DONE, read, printing, foil, reason,
                 seconds = (System.nanoTime() - start) / 1e9, reader = PICTURE_READER)

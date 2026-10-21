@@ -18,11 +18,19 @@ import org.opencv.core.Mat
  */
 class PictureReader(private val index: ImageIndex) {
 
-    /** What the search found: which way up the card is, the nearest distance (bits) of each orientation, and the nearest rows of the better one */
-    data class Search(val rotated: Boolean, val nearestAsGiven: Int, val nearestTurned: Int, val candidates: List<Decide.Candidate>)
+    /**
+     * What the search found: which way up the card is, the nearest distance (bits) of each orientation, the nearest rows of the better one - and that
+     * orientation's distances to EVERY row (what [markerExpected] judges by, never by the five candidates alone)
+     */
+    class Search(val rotated: Boolean, val nearestAsGiven: Int, val nearestTurned: Int, val candidates: List<Decide.Candidate>, val distances: IntArray)
 
-    /** One card's reading: the search, rule A2's decision, the guards' answer, and - when accepted - the finish its printing alone can say */
-    data class Reading(val search: Search, val decision: Decide.PrintingDecision, val acceptance: Decide.Acceptance, val finish: Decide.FinishDecision?) {
+    /**
+     * One card's reading: the search, rule A2's decision, the guards' answer and - when accepted - its finish (Decide.finish: the printing's own when it
+     * exists in one finish only, else the foil network's at the fixed place when it was asked and sure, else "unknown"); [net]: the network's probability
+     * of a foil when it was asked (null: not asked - see [read])
+     */
+    data class Reading(val search: Search, val decision: Decide.PrintingDecision, val acceptance: Decide.Acceptance, val finish: Decide.FinishDecision?,
+                       val net: Double? = null) {
         /** The printing to add, or null (not accepted: the caller goes on as it did before - the AI, or review) */
         val printingId get() = decision.printingId.takeIf { acceptance.accepted }
     }
@@ -44,7 +52,7 @@ class PictureReader(private val index: ImageIndex) {
                 Decide.Candidate(id = id, similarity = Fingerprint.similarity(distances[row]), set = facts?.set, number = facts?.number,
                     oracleId = facts?.oracleId, finishes = facts?.finishes ?: emptyList())
             }
-            return Search(rotated, nearestAsGiven, nearestTurned, candidates)
+            return Search(rotated, nearestAsGiven, nearestTurned, candidates, distances)
         } finally {
             turnedPicture.release()
         }
@@ -54,20 +62,61 @@ class PictureReader(private val index: ImageIndex) {
      * The card's reading. [acceptImageAlone]: the setting (Read by the picture first); [indexCovers]: the index has every printing of the phone's card data
      * (null: cannot be said - not a yes); [inData]: whether the phone's card data has a printing (by id).
      */
-    fun read(card: Mat, acceptImageAlone: Boolean, indexCovers: Boolean?, inData: (String) -> Boolean): Reading {
+    fun read(card: Mat, acceptImageAlone: Boolean, indexCovers: Boolean?, inData: (String) -> Boolean, foilNet: FoilNet? = null): Reading {
         val search = search(card)
         val decision = Decide.printing(search.candidates, Decide.Strip())            // no OCR: no strip
         val chosen = decision.printingId
         val facts = Decide.Facts(acceptImageAlone = acceptImageAlone, indexCovers = indexCovers,
             inData = chosen != null && index.facts.containsKey(chosen) && inData(chosen), stripNames = null, ocrOn = false)
         val acceptance = Decide.acceptPrinting(decision, facts)
-        val finish = if (acceptance.accepted && chosen != null) Decide.finish(index.facts[chosen]?.finishes) else null
-        return Reading(search, decision, acceptance, finish)
+        if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null)
+        // The finish. The foil network at the fixed place - the server's live_read with no OCR reader: only when the search is sure which way up the card
+        // is (the place is the set line on an UPRIGHT card) and every printing the picture cannot tell from its best match prints a marker (an old-frame card
+        // feeds the network whatever is there: it answered confidently on 53 of 80 such cards). Only asked where the printing's own finishes leave it open
+        val finishes = index.facts[chosen]?.finishes
+        val net = if (foilNet != null && Decide.finish(finishes).finish == "unknown" && orientationEstablished(search) && markerExpected(search)) {
+            fixedNet(card, search.rotated, foilNet)
+        } else null
+        return Reading(search, decision, acceptance, Decide.finish(finishes, "unknown", net), net)
+    }
+
+    /** The network's probability of a foil, read at the fixed place of the card turned upright (the search says which way up it lies) - null when nothing to cut */
+    private fun fixedNet(card: Mat, rotated: Boolean, foilNet: FoilNet): Double? {
+        val upright = if (rotated) Mat().also { Core.rotate(card, it, Core.ROTATE_180) } else card
+        try {
+            val crop = FoilNet.fixedCrop(upright) ?: return null
+            try { return foilNet.probability(crop) } finally { crop.release() }
+        } finally {
+            if (upright !== card) upright.release()
+        }
+    }
+
+    /**
+     * printing_check.marker_expected: whether the card the picture shows prints a foil marker, judged by EVERY printing of the index the picture cannot tell
+     * apart from its best match (less than Decide.AGREE_BELOW under it - the best match among them), all of which must print one. From the distances to the
+     * whole index, not the five candidates (five same-art reprints tied would hide an older sixth). More than [MARKER_MAX_TIED] tied, or a printing the table
+     * does not describe: false (the finish is left as before).
+     */
+    fun markerExpected(search: Search): Boolean {
+        val distances = search.distances
+        if (distances.isEmpty()) return false
+        val best = Fingerprint.similarity(distances.min())
+        var tied = 0
+        for (row in distances.indices) {
+            if (best - Fingerprint.similarity(distances[row]) < Decide.AGREE_BELOW) {
+                if (++tied > MARKER_MAX_TIED) return false
+                if (index.facts[index.ids[row]]?.printsAMarker != true) return false
+            }
+        }
+        return tied > 0
     }
 
     companion object {
         /** How many nearest rows are candidates (the server's `_search_now`: k = 5) */
         const val CANDIDATES = 5
+
+        /** printing_check.MARKER_MAX_TIED: more printings tied than this is too ambiguous to say the card prints a marker */
+        const val MARKER_MAX_TIED = 200
 
         /** The server's PrintingCheck ORIENTATION_MIN_SIMILARITY / ORIENTATION_MIN_MARGIN */
         const val ORIENTATION_MIN_SIMILARITY = 0.30

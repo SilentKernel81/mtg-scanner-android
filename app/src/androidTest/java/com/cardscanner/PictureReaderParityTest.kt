@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.cardscanner.reading.FoilNet
 import com.cardscanner.reading.ImageIndex
 import com.cardscanner.reading.PictureReader
 import org.json.JSONObject
@@ -76,6 +77,10 @@ class PictureReaderParityTest {
         val index = index()
         assertEquals("the reference was made of another index", reference.getString("generation"), index.generation)
         val reader = PictureReader(index)
+        val foilNet = FoilNet.load(instrumentation.targetContext)
+        assertNotNull("the foil network (assets/foil_net.onnx) did not load", foilNet)
+        var finishes = 0
+        var byNetwork = 0
         val cases = reference.getJSONArray("cases")
         val report = StringBuilder()
         val flipped = ArrayList<String>()
@@ -87,7 +92,7 @@ class PictureReaderParityTest {
             val name = case.getString("picture")
             val picture = rgba(name)
             val started = System.nanoTime()
-            val reading = reader.read(picture, acceptImageAlone = true, indexCovers = true) { true }
+            val reading = reader.read(picture, acceptImageAlone = true, indexCovers = true, inData = { true }, foilNet = foilNet!!)
             val took = (System.nanoTime() - started) / 1_000_000
             slowest = maxOf(slowest, took); total += took
             picture.release()
@@ -109,13 +114,22 @@ class PictureReaderParityTest {
                 similarity == lastSimilarity || ids.toSet() == gotGroups[similarity]!!.toSet() }
             val worst = wantCandidates.zip(reading.search.candidates).maxOfOrNull { (w, g) -> kotlin.math.abs(w.getDouble("similarity") - g.similarity) } ?: 0.0
             if (reading.printingId != null) added++
+            // the finish of an added card: decide_finish's answer on the server (the network asked at the fixed place where the server asks it)
+            val wantFinish = case.optJSONObject("finish")?.let { it.getString("finish") to it.getString("source") }
+            val gotFinish = reading.finish?.let { it.finish to it.source }
+            if (wantFinish != null) finishes++
+            if (gotFinish?.second == "network") byNetwork++
+            val netOff = if (reading.net != null && !case.isNull("net")) kotlin.math.abs(reading.net!! - case.getDouble("net")) else 0.0
+            if (wantFinish != gotFinish || netOff > NET_TOLERANCE) {
+                flipped += "$name: finish server $wantFinish (net ${if (case.isNull("net")) null else "%.4f".format(case.getDouble("net"))}), phone $gotFinish (net ${reading.net?.let { "%.4f".format(it) }})"
+            }
             report.append("$name: ${got.joinToString()} - candidates ${if (sameIds) "the same" else "DIFFER"}, similarity off by at most %.4f, %d ms\n".format(worst, took))
             if (want != got || !sameIds || worst > SIMILARITY_TOLERANCE) {
                 flipped += "$name\n  server: $want ${wantCandidates.map { it.getString("id").take(8) + "@" + "%.4f".format(it.getDouble("similarity")) }}" +
                     "\n  phone:  $got ${reading.search.candidates.map { it.id.take(8) + "@" + "%.4f".format(it.similarity) }}"
             }
         }
-        android.util.Log.i("Scanner", "PictureReaderParityTest: $added of ${cases.length()} added by the picture alone; per card ${total / cases.length()} ms " +
+        android.util.Log.i("Scanner", "PictureReaderParityTest: $added of ${cases.length()} added by the picture alone, $byNetwork of their finishes from the foil network; per card ${total / cases.length()} ms " +
             "on average, $slowest ms at most\n$report")
         assertTrue("${flipped.size} of ${cases.length()} pictures read differently from the server:\n${flipped.joinToString("\n")}", flipped.isEmpty())
     }
@@ -134,5 +148,7 @@ class PictureReaderParityTest {
     companion object {
         /** 8 bits (FingerprintParityTest.TOLERANCE_BITS) of 768, as a similarity */
         const val SIMILARITY_TOLERANCE = 2.0 * 8 / 768
+        /** The foil network's probability: FoilNetParityTest finds 5e-8 on fixed crops; a crop cut here may differ by a pixel's rounding */
+        const val NET_TOLERANCE = 0.01
     }
 }
