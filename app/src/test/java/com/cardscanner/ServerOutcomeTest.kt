@@ -29,6 +29,7 @@ class ServerOutcomeTest {
         val card = """"card":{"finish":"Regular","name":"X","number":"1","set":"S"}"""
         // the full-card OCR, the picture and the collector line (evidence mode), a vision AI
         assertEquals("Added on the server · OCR", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"light-ocr"}}"""))
+        assertEquals("Added on the server · picture", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"picture"}}"""))
         assertEquals("Added on the server · picture + collector line", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"picture+strip"}}"""))
         assertEquals("Added on the server · AI (local/qwen3.5:9b-q8_0)", line("""{"status":"added",$card,"read":{"name":"X","number":"1","set":"s","reader":"local/qwen3.5:9b-q8_0"}}"""))
         // an answer without a reader (an older server, or none said) adds nothing

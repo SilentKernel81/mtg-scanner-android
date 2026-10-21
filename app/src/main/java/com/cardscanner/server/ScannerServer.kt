@@ -40,13 +40,14 @@ data class ServerOutcome(
 
     /**
      * How the server read the card, in words for the screen: its `reader` is "light-ocr" (the full-card OCR), "picture+strip"
-     * (reading.mode "evidence": the picture's fingerprint and the collector line decided, no AI asked) or the vision AI's model
+     * (reading.mode "evidence": the picture's fingerprint and the collector line decided, no AI asked), "picture" (the picture alone decided) or the vision AI's model
      * ("local/qwen3.5:9b-q8_0", "gemini-..."). Null when the server did not say (a card it could not read).
      */
     val readerLabel: String?
         get() = when (val r = reader?.trim().orEmpty()) {
             "" -> null
             "light-ocr" -> "OCR"
+            "picture" -> "picture"                            // the picture alone: nothing else took part
             "picture+strip" -> "picture + collector line"
             else -> "AI ($r)"
         }
