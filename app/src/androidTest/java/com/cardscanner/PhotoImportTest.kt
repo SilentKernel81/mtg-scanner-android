@@ -21,7 +21,7 @@ import java.io.File
  * Photo import: the decoder for API 26-27 (BitmapFactory + EXIF, ImageDecoder needs API 28) gives
  * the picture the API 28+ one does, and cards that could not be saved are handed back, not lost.
  * Run with: adb -s <device> shell am instrument -w -e class com.cardscanner.PhotoImportTest \
- *   com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner
+ *   com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner
  */
 @RunWith(AndroidJUnit4::class)
 class PhotoImportTest {

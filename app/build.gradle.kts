@@ -47,6 +47,10 @@ android {
     buildTypes {
         debug {
             ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+            // A package of its own (com.cardscanner.debug, its tests com.cardscanner.debug.test): a debug build and its instrumented tests install
+            // BESIDE the release app on a phone, with their own data - never over it (a debug APK is signed with another key, so installing it over
+            // the release app means uninstalling that, which deletes the phone's inventory). Its name: src/debug/res/values/strings.xml
+            applicationIdSuffix = ".debug"
         }
         release {
             isMinifyEnabled = false

@@ -22,7 +22,7 @@ import kotlin.math.abs
  * (station/corner_net.py, OpenCV in Python): same file, same windows. Reference corners in
  * assets/parity/reference.json were made by the Python code on these very JPEGs. Run it with
  *   adb -s <device> shell am instrument -w -e class com.cardscanner.CornerNetParityTest \
- *     com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner
+ *     com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner
  * (never connectedDebugAndroidTest: it uninstalls the app and wipes its data).
  */
 @RunWith(AndroidJUnit4::class)

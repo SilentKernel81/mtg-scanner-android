@@ -256,7 +256,7 @@ first, which removes the app's data.
   capture (PNGs in `androidTest/assets/parity`) differs from the Python one in **0 of 768 bits**, and the foil network is
   within 5e-8 of the Python probability on 16 crops. Not tried on a phone (another CPU's DCT may put a frequency on the
   other side of the median: the test allows 8 bits). Run with
-  `adb -s <emulator serial> shell am instrument -w -e class com.cardscanner.FingerprintParityTest,com.cardscanner.FoilNetParityTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`.
+  `adb -s <emulator serial> shell am instrument -w -e class com.cardscanner.FingerprintParityTest,com.cardscanner.FoilNetParityTest com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner`.
 - `ScryfallSearchTest` and the address cases in `ServerOutcomeTest` also cover paginated printing
   search and malformed server addresses, using intercepted HTTP rather than live services.
 - `ReliabilityTest` (instrumented) uses isolated temporary databases, synthetic photos and
@@ -264,20 +264,20 @@ first, which removes the app's data.
   repeated Add/Undo, interrupted inventory/review commits, version-1 database upgrades,
   bounded server polling, cancellation, outbox thumbnails and offline search/deletion. Run only
   that class on an emulator after installing both APKs:
-  `adb shell am instrument -w -e class com.cardscanner.ReliabilityTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`.
+  `adb shell am instrument -w -e class com.cardscanner.ReliabilityTest com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner`.
   It does not capture from the camera or call real AI, Scryfall or scanner servers.
 - `CredentialStorageTest` (instrumented) uses unique preferences and Android Keystore aliases
   with synthetic credentials. It covers encryption, plaintext migration and migration failure,
   tampering, key loss, credential removal, randomized IVs and final settings writes on cancellation.
   Run it alongside the isolated reliability suite with
-  `adb shell am instrument -w -e class com.cardscanner.ReliabilityTest,com.cardscanner.CredentialStorageTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`.
+  `adb shell am instrument -w -e class com.cardscanner.ReliabilityTest,com.cardscanner.CredentialStorageTest com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner`.
 - `OfflineFindTest` (instrumented; card data downloaded + internet) - offline lookups against the
   API. 2026-09-26: every set + number / name + number read gave the same printing and tag; only
   name-only matches differ (Scryfall's default printing vs the newest), which go to review anyway.
 - `OutlineParityTest` (instrumented) - outline detection over recorded frames; compare the
   output with `find_card_outline` on the same frames. Frames are passed in as assets:
   `./gradlew assembleDebugAndroidTest -PdebugFrames=<dir containing frames/>`, install both
-  APKs, `adb shell am instrument -w -e class com.cardscanner.OutlineParityTest com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner`,
+  APKs, `adb shell am instrument -w -e class com.cardscanner.OutlineParityTest com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner`,
   then `adb pull /sdcard/Android/data/com.cardscanner/files/outlines.json`.
   (Measured 2026-09-26 on 400 recorded frames: same detections as Python, corners within 0.6 px.)
 - `PipelineTest` (instrumented) - card images (assets `cards/`) -> local AI -> Scryfall:

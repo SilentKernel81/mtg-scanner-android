@@ -8,3 +8,6 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+
+# The reading-by-picture reference (app/src/test/resources/picture_reference.py): the picture index and test pictures, ~40 MB - data, never in git
+app/src/androidTest/assets/picture/

@@ -23,7 +23,7 @@ import kotlin.math.abs
  * crops of set lines (the server's tests/data/foil_marker_crops.npz). foil_reference.json - the crops, the Python
  * probabilities and the SHA-256 of the network file - is made by reading_reference.py. Run it with
  *   adb -s <EMULATOR serial> shell am instrument -w -e class com.cardscanner.FoilNetParityTest \
- *     com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner
+ *     com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner
  * What it does NOT cover: finding the set line on a card (the server does it with its OCR reader).
  */
 @RunWith(AndroidJUnit4::class)

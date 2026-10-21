@@ -24,7 +24,7 @@ import org.opencv.imgproc.Imgproc
  * two synthetic cards and one real capture - and the reference hashes in fingerprint_hashes.json were made by
  * the Python code reading those very files; reading_reference.py makes both. Run it with
  *   adb -s <EMULATOR serial> shell am instrument -w -e class com.cardscanner.FingerprintParityTest \
- *     com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner
+ *     com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner
  * (never connectedDebugAndroidTest: it uninstalls the app and wipes its data - and not on the user's phone).
  *
  * A few bits may differ: the DCT of OpenCV on another CPU can land a frequency exactly on the median the other
