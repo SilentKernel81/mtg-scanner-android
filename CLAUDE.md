@@ -70,10 +70,13 @@ minSdk 26, ABIs arm64-v8a + x86_64 (debug; the release is arm64-v8a only, `-Prel
   `../scanner-server` with its venv (`parser_reference.py` prints its JSON, `export_reference.py`
   writes the file named on its command line).
 - **Instrumented tests** (`app/src/androidTest`): run them with `adb shell am instrument -w -e class
-  com.cardscanner.<Test> com.cardscanner.test/androidx.test.runner.AndroidJUnitRunner` after
+  com.cardscanner.<Test> com.cardscanner.debug.test/androidx.test.runner.AndroidJUnitRunner` after
   installing both APKs (`assembleDebug assembleDebugAndroidTest`) - **not** `connectedDebugAndroidTest`,
-  which uninstalls the app afterwards and wipes its data (and the files the tests write). Results
-  go to `/sdcard/Android/data/com.cardscanner/files/`. `OutlineParityTest` takes recorded frames
+  which uninstalls the app afterwards and wipes its data (and the files the tests write). **Debug builds are
+  `com.cardscanner.debug`** ("Card Scanner (debug)", since 2026-10-21): they and their tests install BESIDE the release app with their
+  own data, so the instrumented tests run on the user's Pixel too without touching its inventory; the release app (`com.cardscanner`,
+  the release key) is updated in place with `adb install -r` of a signed release build - check its signature first. Results
+  go to `/sdcard/Android/data/com.cardscanner.debug/files/`. `OutlineParityTest` takes recorded frames
   as assets (`-PdebugFrames=<dir with frames/>`), `PipelineTest` a local AI (`-e aiUrl -e aiModel`),
   `OfflineFindTest` downloaded card data + internet. Details in README.md.
 - **Real device**: the user's Pixel 10 is mounted over the scanning box (USB debugging). Check
@@ -100,7 +103,8 @@ collection modules in `core/`, `server/stations_api.py` as written.
 | Area | Code |
 |---|---|
 | Card outline, warp (port of `object_detector.py`) | `detection/CardOutline.kt`: `findCardOutline`, `warpCard`; the corner network asked first: `detection/CardFinder.kt` (`find`: network, then the outline detector), `CornerNet.kt` (OpenCV dnn, `assets/corner_net.onnx` - the server repository's `station/corner_net.onnx`), `CornerMath.kt` (the arithmetic, JVM-tested); `androidTest/CornerNetParityTest.kt` against the Python code's corners |
-| Reading by picture and collector line - a port of the server's `core/reading` and image fingerprint (**not used by the app yet**) | `reading/Decide.kt` (`printing`, `finish`, `plainNumber`; pure), `reading/Fingerprint.kt` (`hash`, `stretchPlane`, `channelBits`, `distance`, `similarity`), `reading/FoilNet.kt` (the network, `normalise`, `foilProbability`); tests: `ReadingDecideParityTest`, `FingerprintMathTest`, `FoilMathTest` (JVM), `androidTest/FingerprintParityTest`, `FoilNetParityTest`; reference files and the server's test files copied by `app/src/test/resources/reading_reference.py` |
+| Reading by picture and collector line in standalone mode (since 2026-10-21: the server's `live_read` with OCR, the full-card confirmation, the finish) - `reading/PictureReader.kt` (the gatherer: search, strip, `ocrFacts`, `markerExpected`), `reading/ImageIndex.kt`, `IndexDownload.kt`, `PictureIndexRepository.kt`, `reading/TextReader.kt` + `TextMath.kt` + `CardText.kt` (the OCR: light-ocr's networks in `assets/ocr/`, OpenCV 5 dnn), `CaptureProcessor.readByPicture`; tests `PictureReaderParityTest`, `TextReaderParityTest`, `CardTextParityTest`, `PictureFirstTest`, `IndexDownloadTest` (instrumented), `ImageIndexTest`, `TextMathTest`, `CardTextTest`, `IndexDownloadPublishTest` (JVM); references `picture_reference.py`, `ocr_reference.py` |
+| The decision's pure functions - a port of the server's `core/reading` and image fingerprint | `reading/Decide.kt` (`printing`, `finish`, `plainNumber`; pure), `reading/Fingerprint.kt` (`hash`, `stretchPlane`, `channelBits`, `distance`, `similarity`), `reading/FoilNet.kt` (the network, `normalise`, `foilProbability`); tests: `ReadingDecideParityTest`, `FingerprintMathTest`, `FoilMathTest` (JVM), `androidTest/FingerprintParityTest`, `FoilNetParityTest`; reference files and the server's test files copied by `app/src/test/resources/reading_reference.py` |
 | Stillness, auto-capture, new card, fixed area (port of `scanner.py`) | `detection/CardTracker.kt`: `process`, `processArea`, `isCardSettled`, `newCardArrived` |
 | Camera frames, taking a capture | `ScannerViewModel.kt`: `analyze`, `manualCapture`, `capture`, `cutOutCard`; `ui/ScannerScreen.kt`: `CameraPreview` |
 | A capture's way: saved, processed in the current mode, retried without a network, resumed after a restart | `Outbox.kt`; `CaptureProcessor.kt`: `enqueue`, `process` (the retry loop), `isOffline`, `resume`; display list in `ScanHistory.kt` |
@@ -151,14 +155,15 @@ collection modules in `core/`, `server/stations_api.py` as written.
   says it cannot follow the capture (`ServerRefused.cannotFollow`: 404 / 409), on the user's
   second Remove (`serverCannotFollow`). Never dismiss a row on any other failure, and never on
   the first tap: the card may still be on the server.
-- **`reading/` is a port that nothing calls - keep it so until it is wired in properly** (`Decide`, `Fingerprint`, `FoilNet`;
-  the server's `core/reading` and `core/image_index.py`). Its test files are COPIES of the server's, made by
-  `reading_reference.py` - never edit them here; when the server's cases change, run the script again and the Kotlin has to pass the new
-  ones. `Decide.kt` is only rule A2 and the finish rule: **the guards the server puts around a decision by the picture alone are in its
-  evidence-gathering code (`PrintingCheck.live_read`), not in `decide`, and must be ported with the code that gathers the evidence** -
-  the best match at least 0.5 similar, the collector line not naming a printing the card data has and the index lacks, and a card only
-  the picture decided NOT added unless the person turned that on (off by default). Without them a printing newer than the index is added
-  as another printing (36% of the pictures whose printing was not indexed, in the server's simulation). A change to the fingerprint on
+- **`reading/` decides as the server does - keep it so** (`Decide`, `Fingerprint`, `FoilNet`, `PictureReader`, `TextReader`, `CardText`;
+  the server's `core/reading`, `core/image_index.py`, `printing_check.live_read` / `ocr_facts`, `card_ocr.py`, the OCR reference in
+  `scripts/experiments/ocr_port/`). Its test files are COPIES of the server's, made by `reading_reference.py`, `picture_reference.py` and
+  `ocr_reference.py` - never edit them here; when the server's cases change, run the scripts again and the Kotlin has to pass the new
+  ones. `Decide.kt` holds rule A2, the finish and the guards; **the gathering (`PictureReader`) does every lookup** - the index's coverage of the
+  card data (none of it added by the picture alone while the index lacks printings), a strip naming a printing the index or card data lacks, a
+  line naming another printing of the same card (oracle id), a collector number with a letter suffix looked up as written only (never its digits),
+  the full-card read upright, the star / dot only on a printing that prints the marker. Each of these was a Codex finding with a test on the Pixel;
+  the server has the same rule (its CLAUDE.md). Python's regex differs (ICU refuses `(?U)`: `CardText` spells the classes out). A change to the fingerprint on
   either side (`prepare`, `hash_card`) makes every index built before wrong: the server's `DESCRIPTOR` changes, and so must this port. The
   fingerprint's OpenCV steps are tested on an emulator only; test them there, never on the user's phone (its app is the release build:
   the debug test build cannot be installed over it without wiping its data).
