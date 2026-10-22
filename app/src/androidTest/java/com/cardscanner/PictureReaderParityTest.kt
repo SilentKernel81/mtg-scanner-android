@@ -276,6 +276,40 @@ class PictureReaderParityTest {
         // chosen-by-its-line path is the 41 captures' parity: their "strong" decisions)
     }
 
+    /**
+     * A card upside down is decided as the same card the right way up (a Codex review of 2026-10-21: the strip was read upright but the full card as given,
+     * so a picture-alone decision that needs the name - parseMagic finds the title at the top only - was refused for the orientation alone): a capture the
+     * full card confirms by its NAME, read as captured and turned 180 degrees - the same decision, the same full-card facts, accepted both ways.
+     */
+    @Test fun anUpsideDownCardIsConfirmedAsTheSameCardUpright() {
+        val reference = JSONObject(asset("reference.json").use { String(it.readBytes()) })
+        val index = index()
+        val reader = PictureReader(index)
+        val textReader = com.cardscanner.reading.TextReader.load(instrumentation.targetContext)!!
+        val case = reference.getJSONArray("cases").let { a -> List(a.length()) { a.getJSONObject(it) } }.first { c ->
+            c.getJSONObject("with_strip").optJSONObject("full_card")?.let { it.getBoolean("accepted") && it.getJSONObject("facts").getBoolean("name_matches") } == true
+        }
+        val lookups = HashMap<String, PictureReader.StripPrinting>()
+        case.getJSONObject("with_strip").getJSONObject("full_card").optJSONObject("lookups")?.let { l ->
+            for (key in l.keys()) lookups[key] = l.optJSONObject(key)?.let { PictureReader.StripPrinting.Found(it.getString("id")) } ?: PictureReader.StripPrinting.NotFound
+        }
+        fun readTurned(turned: Boolean): PictureReader.Reading {
+            val picture = rgba(case.getString("picture"))
+            val given = if (turned) Mat().also { org.opencv.core.Core.rotate(picture, it, org.opencv.core.Core.ROTATE_180); picture.release() } else picture
+            try {
+                return reader.read(given, acceptImageAlone = true, indexCovers = true, inData = { true }, textReader = textReader,
+                    stripPrinting = { set, number -> lookups["${set.lowercase()} $number"] ?: PictureReader.StripPrinting.NotFound },
+                    describe = { id -> index.facts[id]?.let { PictureReader.Described(it.name) } })
+            } finally { given.release() }
+        }
+        val upright = readTurned(false)
+        val turned = readTurned(true)
+        assertEquals("${case.getString("picture")} upright: accepted", true, upright.acceptance.accepted)
+        assertEquals("turned: the search knows", true, turned.search.rotated != upright.search.rotated)
+        assertEquals("turned: the same printing", upright.printingId, turned.printingId)
+        assertEquals("turned: the same full-card facts", upright.full, turned.full)
+    }
+
     @Test fun anIndexThatDoesNotHoldTogetherIsNoIndex() {
         val folder = File(instrumentation.targetContext.cacheDir, "picture_index_broken")
         copyIndex(folder)

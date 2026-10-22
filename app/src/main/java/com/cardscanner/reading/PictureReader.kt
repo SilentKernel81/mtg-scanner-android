@@ -95,9 +95,16 @@ class PictureReader(private val index: ImageIndex) {
         // printing of the same card refuses, and a name that is another card's which a line names too refuses (two Codex reviews of 2026-10-21)
         var full: Decide.OcrFacts? = null
         if (acceptance.needsOcr && textReader != null && chosen != null) {
-            val read = CardText.parseMagic(textReader.read(card), card.cols(), card.rows())
-            full = ocrFacts(read, chosen, strip, stripPrinting, describe)
-            acceptance = Decide.confirmByOcr(full, decision.lead)
+            // the card the way up the search found it, as the strip was read: parseMagic looks for the title at the top and the collector line at the bottom -
+            // read as given, an upside-down card's decision was refused for that alone (a Codex review of 2026-10-21; the server's _ocr_names: 'rotated')
+            val upright = if (search.rotated) Mat().also { Core.rotate(card, it, Core.ROTATE_180) } else card
+            try {
+                val read = CardText.parseMagic(textReader.read(upright), upright.cols(), upright.rows())
+                full = ocrFacts(read, chosen, strip, stripPrinting, describe)
+                acceptance = Decide.confirmByOcr(full, decision.lead)
+            } finally {
+                if (upright !== card) upright.release()
+            }
         }
         if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null, strip = strip, stripNames = stripNames, full = full)
         if (strip != null) {
