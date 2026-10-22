@@ -103,7 +103,8 @@ def with_strip(rgb, search, picture, cards):
     return {'strip': strip, 'strip_printing': line,              # None: no whole line; '': the card data has none; an id; 'lookup_failed'
             'decision': {'path': decision['path'], 'printing_id': decision['printing_id']},
             'strip_names': facts['strip_names'], 'accepted': bool(verdict['accepted']), 'refused': verdict['refused'], 'full_card': full,
-            'finish': decide_finish(card.get('finishes'), strip['symbol'], strip['net']) if verdict['accepted'] and card else None}
+            'finish': (decide_finish(card.get('finishes'), strip['symbol'] if printing_check.prints_a_marker(card) else 'unknown',
+                                     strip['net'] if printing_check.prints_a_marker(card) else None) if verdict['accepted'] and card else None)}
 net = foil_marker.load()
 assert net is not None, 'the foil network (core/foil_net.onnx) did not load'
 cases = []

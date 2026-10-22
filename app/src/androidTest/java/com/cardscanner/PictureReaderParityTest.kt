@@ -310,6 +310,48 @@ class PictureReaderParityTest {
         assertEquals("turned: the same full-card facts", upright.full, turned.full)
     }
 
+    /**
+     * The star / dot the OCR read and the foil network say the finish only on a printing that prints the marker (a Codex review of 2026-10-21): a capture
+     * whose finish came from the symbol, its printing's row in the table rewritten as an older release (2019) - the finish is unknown (not the symbol's),
+     * so the AI's foil check or review decides it. The index is the parity one, its table changed for that one printing.
+     */
+    @Test fun anOlderPrintingsFinishIsNotTheSymbols() {
+        val reference = JSONObject(asset("reference.json").use { String(it.readBytes()) })
+        val case = reference.getJSONArray("cases").let { a -> List(a.length()) { a.getJSONObject(it) } }.first { c ->
+            c.getString("picture") !in setOf("phone-0240eb84_1041_1792505189.png", "phone-0240eb84_110_1792204606.png") &&
+                c.getJSONObject("with_strip").optJSONObject("finish")?.getString("source") == "symbol" &&
+                c.getJSONObject("with_strip").getJSONObject("decision").getString("path") == "strong"       // decided by its line: no lookup, no full card
+        }
+        val chosen = case.getJSONObject("with_strip").getJSONObject("decision").getString("printing_id")
+        // the parity index, its printings table with the chosen printing's release moved to 2019
+        val folder = File(instrumentation.targetContext.cacheDir, "picture_index_older").apply { deleteRecursively(); mkdirs() }
+        for (name in instrumentation.context.assets.list("picture/index")!!) {
+            asset("index/$name").use { input ->
+                if (name == "printings.tsv") {
+                    val rows = String(input.readBytes()).split("\n").map { line ->
+                        if (line.startsWith(chosen + "\t")) line.split("\t").toMutableList().also { it[6] = "2019-11-01" }.joinToString("\t") else line
+                    }
+                    File(folder, ImageIndex.PRINTINGS).outputStream().use { out -> GZIPOutputStream(out).use { it.write(rows.joinToString("\n").toByteArray()) } }
+                } else File(folder, name).outputStream().use { input.copyTo(it) }
+            }
+        }
+        val index = ImageIndex.load(folder)!!
+        assertEquals(false, index.facts[chosen]!!.printsAMarker)
+        val reader = PictureReader(index)
+        val textReader = com.cardscanner.reading.TextReader.load(instrumentation.targetContext)!!
+        val picture = rgba(case.getString("picture"))
+        val reading = try {
+            reader.read(picture, acceptImageAlone = true, indexCovers = true, inData = { true }, foilNet = FoilNet.load(instrumentation.targetContext),
+                textReader = textReader, stripPrinting = { _, _ -> PictureReader.StripPrinting.NotFound },
+                describe = { id -> index.facts[id]?.let { PictureReader.Described(it.name) } })
+        } finally { picture.release() }
+        folder.deleteRecursively()
+        assertTrue("the OCR still reads a symbol: ${reading.strip}", reading.strip?.symbol == "foil" || reading.strip?.symbol == "non-foil")
+        assertEquals("still decided by its line", chosen, reading.printingId)
+        assertEquals("an older printing's finish is not the symbol's", "none", reading.finish?.source)
+        assertEquals("unknown", reading.finish?.finish)
+    }
+
     @Test fun anIndexThatDoesNotHoldTogetherIsNoIndex() {
         val folder = File(instrumentation.targetContext.cacheDir, "picture_index_broken")
         copyIndex(folder)

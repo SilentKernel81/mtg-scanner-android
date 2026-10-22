@@ -108,8 +108,14 @@ class PictureReader(private val index: ImageIndex) {
         }
         if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null, strip = strip, stripNames = stripNames, full = full)
         if (strip != null) {
-            // with OCR: decide_finish on the strip's evidence (the printing's own finishes first, then the star / dot read, then the network at the OCR's box)
-            return Reading(search, decision, acceptance, Decide.finish(index.facts[chosen]?.finishes, strip.symbol, strip.net), strip.net, strip, stripNames, full)
+            // with OCR: decide_finish on the strip's evidence (the printing's own finishes first, then the star / dot read, then the network at the OCR's box) -
+            // the star / dot and the network only on a printing that PRINTS the marker (Facts.printsAMarker: The Lord of the Rings on, modern frame; the
+            // server's live_read the same): an older line's separator is not known to encode the finish (a Codex review of 2026-10-21) - else only the
+            // printing's own finishes count, and an unknown finish goes to the AI's foil check or review
+            val facts = index.facts[chosen]
+            val marker = facts?.printsAMarker == true
+            val finish = Decide.finish(facts?.finishes, if (marker) strip.symbol else "unknown", if (marker) strip.net else null)
+            return Reading(search, decision, acceptance, finish, strip.net, strip, stripNames, full)
         }
         // The finish. The foil network at the fixed place - the server's live_read with no OCR reader: only when the search is sure which way up the card
         // is (the place is the set line on an UPRIGHT card) and every printing the picture cannot tell from its best match prints a marker (an old-frame card
