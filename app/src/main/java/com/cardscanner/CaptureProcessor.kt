@@ -222,7 +222,8 @@ internal class CaptureProcessor(
             // the collector line read by OCR (Settings: Read the collector line) - the strip of the card: rule A2's "strong" decision, the star / dot for the finish
             val ocr = if (settings().readCollectorLine) textReader else null
             val reading = reader.read(mat, acceptImageAlone = true, indexCovers = pictureIndex.covers(), inData = { data.byId(it) != null }, foilNet = foilNet,
-                textReader = ocr, stripPrinting = { set, number -> stripPrinting(data, set, number) })
+                textReader = ocr, stripPrinting = { set, number -> stripPrinting(data, set, number) },
+                describe = { id -> data.namesOf(id)?.let { (name, flavor) -> PictureReader.Described(name, flavor) } })
             val accepted = reading.printingId?.let { data.byId(it) }?.copy(match = "picture")
             val guess = reading.search.candidates.firstOrNull()?.let { data.byId(it.id) }
             val why = when {
@@ -234,6 +235,8 @@ internal class CaptureProcessor(
                 "(similarity ${reading.decision.similarity?.let { "%.3f".format(it) }}, lead ${reading.decision.lead?.let { "%.3f".format(it) }}" +
                 (why?.let { ", $it" } ?: "") + ")")
             reading.strip?.let { Log.i(TAG, "Collector line: ${it.set} ${it.number}, symbol ${it.symbol}${it.net?.let { n -> ", network %.3f".format(n) } ?: ""}") }
+            reading.full?.let { Log.i(TAG, "Full card: name ${if (it.nameMatches) "matches" else "does not match"}, line ${it.lineNames}, strip ${it.stripNames}" +
+                (if (it.nameOfOtherLine) ", the name is another card's that a line names" else "") + " -> ${if (reading.acceptance.accepted) "confirmed" else reading.acceptance.refused}") }
             // the marker as the OCR read it (symbol) or the network (at the OCR's box, or at the fixed place without OCR) - only when the finish came from one of
             // them (the printing's own finishes, when they decide, are FinishPolicy's)
             val marker = when {

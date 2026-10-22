@@ -30,7 +30,7 @@ class PictureReader(private val index: ImageIndex) {
      * of a foil when it was asked (null: not asked - see [read])
      */
     data class Reading(val search: Search, val decision: Decide.PrintingDecision, val acceptance: Decide.Acceptance, val finish: Decide.FinishDecision?,
-                       val net: Double? = null, val strip: Decide.Strip? = null, val stripNames: String? = null) {
+                       val net: Double? = null, val strip: Decide.Strip? = null, val stripNames: String? = null, val full: Decide.OcrFacts? = null) {
         /** The printing to add, or null (not accepted: the caller goes on as it did before - the AI, or review) */
         val printingId get() = decision.printingId.takeIf { acceptance.accepted }
     }
@@ -74,11 +74,12 @@ class PictureReader(private val index: ImageIndex) {
      * goes to rule A2 (a "strong" decision: the line names the printing the picture agrees with), the star / dot the OCR read gives the finish, the foil
      * network only where it read none - cut at the OCR's own box of the set line (read_strip_evidence). [stripPrinting]: what the card data has at the
      * strip's set and number (strip_names - the guards: a line naming a printing the index lacks or the card data lacks refuses the picture alone).
-     * NOT here yet: the full-card OCR's confirmation of a decision by the picture alone (the server's confirm_by_ocr with OCR on) - the phone has no
-     * full-card OCR wired in, so such a decision is accepted as without OCR (ocrOn false), with the strip's guards. Null: no OCR, as before.
+     * With OCR, a decision by the picture alone needs the full-card OCR's confirmation (the server's confirm_by_ocr): the card is read whole and must
+     * agree ([ocrFacts]); [describe] gives a printing's name and flavor name (the phone's card data) for the name checks. Null: no OCR, as before.
      */
     fun read(card: Mat, acceptImageAlone: Boolean, indexCovers: Boolean?, inData: (String) -> Boolean, foilNet: FoilNet? = null,
-             textReader: TextReader? = null, stripPrinting: ((set: String, number: String) -> StripPrinting)? = null): Reading {
+             textReader: TextReader? = null, stripPrinting: ((set: String, number: String) -> StripPrinting)? = null,
+             describe: ((id: String) -> Described?)? = null): Reading {
         val search = search(card)
         val strip = textReader?.let { readStrip(card, search.rotated, it, foilNet) }
         val decision = Decide.printing(search.candidates, strip ?: Decide.Strip())
@@ -86,24 +87,22 @@ class PictureReader(private val index: ImageIndex) {
         val inDataNow = chosen != null && index.facts.containsKey(chosen) && inData(chosen)
         // live_read: what the strip's whole line names is looked up only where a guard asks it - the picture alone, allowed, a printing in the card data
         val stripNames = if (strip != null && decision.path == "image" && acceptImageAlone && inDataNow) stripNames(strip, chosen!!, stripPrinting) else null
-        val facts = Decide.Facts(acceptImageAlone = acceptImageAlone, indexCovers = indexCovers, inData = inDataNow, stripNames = stripNames, ocrOn = false)
+        val facts = Decide.Facts(acceptImageAlone = acceptImageAlone, indexCovers = indexCovers, inData = inDataNow, stripNames = stripNames, ocrOn = textReader != null)
         var acceptance = Decide.acceptPrinting(decision, facts)
-        // The strip's half of the server's confirm_by_ocr (a Codex review of 2026-10-21): with OCR on, the server asks the full-card OCR to confirm a decision
-        // by the picture alone, and a STRIP naming another printing of the SAME card refuses it whatever the name and the lead (strip_names 'same_card') -
-        // the picture chose A, a readable collector line says B. The phone has no full-card OCR yet, so it asks that half alone: an indexed printing the
-        // line names, other than the chosen one, of the same card (oracle id, from the index's table) -> not accepted (the AI, or review). A line naming a
-        // DIFFERENT card stays no evidence (a Secret Lair prints another card's line by design: the Deadpool Bolt reads GN2 42, Lightning Strike) - the
-        // server's name check behind that waits for the phone's full-card OCR
-        if (acceptance.accepted && decision.path == "image" && stripNames == "indexed_other") {
-            val named = (stripPrinting?.invoke(strip!!.set, strip.number) as? StripPrinting.Found)?.id
-            if (named != null && sameCard(named, chosen!!)) {
-                acceptance = Decide.confirmByOcr(Decide.OcrFacts(nameMatches = true, lineNames = null, stripNames = "same_card"))
-            }
+        // With OCR, a decision by the picture alone is accepted only once the FULL-CARD OCR confirms it (needs_ocr -> Identification._ocr_names on the
+        // server): the card read whole as given (CardText.parseMagic), the facts gathered here (ocrFacts: printing_check.ocr_facts) and Decide.confirmByOcr
+        // with the decision's lead - the name must match (or the lead reach LEAD_WAIVES_NAME), a line - the OCR's own or the strip's - naming another
+        // printing of the same card refuses, and a name that is another card's which a line names too refuses (two Codex reviews of 2026-10-21)
+        var full: Decide.OcrFacts? = null
+        if (acceptance.needsOcr && textReader != null && chosen != null) {
+            val read = CardText.parseMagic(textReader.read(card), card.cols(), card.rows())
+            full = ocrFacts(read, chosen, strip, stripPrinting, describe)
+            acceptance = Decide.confirmByOcr(full, decision.lead)
         }
-        if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null, strip = strip, stripNames = stripNames)
+        if (!acceptance.accepted || chosen == null) return Reading(search, decision, acceptance, null, strip = strip, stripNames = stripNames, full = full)
         if (strip != null) {
             // with OCR: decide_finish on the strip's evidence (the printing's own finishes first, then the star / dot read, then the network at the OCR's box)
-            return Reading(search, decision, acceptance, Decide.finish(index.facts[chosen]?.finishes, strip.symbol, strip.net), strip.net, strip, stripNames)
+            return Reading(search, decision, acceptance, Decide.finish(index.facts[chosen]?.finishes, strip.symbol, strip.net), strip.net, strip, stripNames, full)
         }
         // The finish. The foil network at the fixed place - the server's live_read with no OCR reader: only when the search is sure which way up the card
         // is (the place is the set line on an UPRIGHT card) and every printing the picture cannot tell from its best match prints a marker (an old-frame card
@@ -139,6 +138,59 @@ class PictureReader(private val index: ImageIndex) {
             strip.release()
             if (upright !== card) upright.release()
         }
+    }
+
+    /** What the card data says of a printing for the name checks: its name and flavor name (namesMatch checks both, as database.names_match) */
+    data class Described(val name: String, val flavorName: String? = null)
+
+    /**
+     * printing_check._line_names: what a whole collector line (a set AND a number) names next to the chosen printing - (null | "chosen" | "same_card" |
+     * "other_card" | "unknown" | "lookup_failed", the id it names). "chosen": the chosen printing's own set and number (Decide.plainNumber, case ignored);
+     * else the card data's printing there ([stripPrinting], the suffix rule included), the same card by oracle id - or, when either lacks one, by the
+     * same name exactly (never namesMatch's forgiveness, which takes Lightning Strike for Lightning Bolt)
+     */
+    private fun lineNames(set: String?, number: String?, chosen: String, lookup: ((String, String) -> StripPrinting)?, describe: ((String) -> Described?)?): Pair<String?, String?> {
+        val n = (number ?: "").trim()
+        val s = (set ?: "").trim().lowercase()
+        if (n.isEmpty() || s.isEmpty()) return null to null
+        val card = index.facts[chosen]
+        if (card != null && s == card.set.lowercase() && Decide.plainNumber(n).lowercase() == Decide.plainNumber(card.number).lowercase()) return "chosen" to chosen
+        return when (val named = lookup?.invoke(s, n) ?: StripPrinting.Failed) {
+            StripPrinting.Failed -> "lookup_failed" to null
+            StripPrinting.NotFound -> "unknown" to null
+            is StripPrinting.Found -> {
+                val a = index.facts[named.id]?.oracleId
+                val b = card?.oracleId
+                val same = if (a != null && b != null) a == b
+                    else (com.cardscanner.scryfall.Scryfall.searchKey(describe?.invoke(named.id)?.name ?: index.facts[named.id]?.name) ?: "") ==
+                        (com.cardscanner.scryfall.Scryfall.searchKey(describe?.invoke(chosen)?.name ?: card?.name) ?: "-")
+                (if (same) "same_card" else "other_card") to named.id
+            }
+        }
+    }
+
+    /**
+     * printing_check.ocr_facts: what the full-card OCR's read says about the printing the picture alone chose, as Decide.confirmByOcr takes it - the name
+     * matches the chosen card (namesMatch: a face, the flavor name, a misread forgiven), what the read's own line names, what the strip's line names (looked
+     * up whatever was read), and whether a name that is not the chosen card's IS the card a line names (the OCR's or the strip's)
+     */
+    fun ocrFacts(read: CardText.MagicRead?, chosen: String, strip: Decide.Strip?, lookup: ((String, String) -> StripPrinting)?,
+                 describe: ((String) -> Described?)?): Decide.OcrFacts {
+        val (stripNames, stripNamed) = if (strip != null) lineNames(strip.set, strip.number, chosen, lookup, describe) else null to null
+        if (read == null) return Decide.OcrFacts(nameMatches = false, lineNames = null, nameOfOtherLine = false, stripNames = stripNames)
+        val card = describe?.invoke(chosen)
+        val names = listOfNotNull(card?.name ?: index.facts[chosen]?.name, card?.flavorName)
+        val nameMatches = read.name.isNotEmpty() && com.cardscanner.scryfall.Scryfall.namesMatch(read.name, names)
+        val (lineNames, named) = lineNames(read.setCode, read.collectorNumber, chosen, lookup, describe)
+        var nameOfOtherLine = false
+        if (read.name.isNotEmpty() && !nameMatches) {
+            val others = listOfNotNull(named.takeIf { lineNames == "other_card" }, stripNamed.takeIf { stripNames == "other_card" })
+            nameOfOtherLine = others.any { id ->
+                val d = describe?.invoke(id)
+                com.cardscanner.scryfall.Scryfall.namesMatch(read.name, listOfNotNull(d?.name ?: index.facts[id]?.name, d?.flavorName))
+            }
+        }
+        return Decide.OcrFacts(nameMatches = nameMatches, lineNames = lineNames, nameOfOtherLine = nameOfOtherLine, stripNames = stripNames)
     }
 
     /**

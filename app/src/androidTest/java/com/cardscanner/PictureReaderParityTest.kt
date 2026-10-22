@@ -147,7 +147,8 @@ class PictureReaderParityTest {
      */
     @Test fun withTheStripThePhoneDecidesAsTheServer() {
         val reference = JSONObject(asset("reference.json").use { String(it.readBytes()) })
-        val reader = PictureReader(index())
+        val stripIndex = index()
+        val reader = PictureReader(stripIndex)
         val textReader = com.cardscanner.reading.TextReader.load(instrumentation.targetContext)
         assertNotNull("the OCR reader did not load", textReader)
         val foilNet = FoilNet.load(instrumentation.targetContext)
@@ -167,10 +168,24 @@ class PictureReaderParityTest {
                 want.getString("strip_printing").isEmpty() -> PictureReader.StripPrinting.NotFound
                 else -> PictureReader.StripPrinting.Found(want.getString("strip_printing"))
             }
+            // the full-card check's lookups (set + number -> the card data's printing, or none) and names, as the server's card data answered them
+            val full = want.optJSONObject("full_card")
+            val lookups = HashMap<String, PictureReader.StripPrinting>()
+            val names = HashMap<String, PictureReader.Described>()
+            full?.optJSONObject("lookups")?.let { l ->
+                for (key in l.keys()) {
+                    val found = l.optJSONObject(key)
+                    lookups[key] = if (found == null) PictureReader.StripPrinting.NotFound else PictureReader.StripPrinting.Found(found.getString("id"))
+                    if (found != null) names[found.getString("id")] = PictureReader.Described(found.getString("name"), found.optString("flavor_name").takeIf { !found.isNull("flavor_name") })
+                }
+            }
+            full?.optJSONObject("card")?.let { c -> want.getJSONObject("decision").optString("printing_id").takeIf { it.isNotEmpty() }?.let { id ->
+                names[id] = PictureReader.Described(c.getString("name"), c.optString("flavor_name").takeIf { !c.isNull("flavor_name") }) } }
             val picture = rgba(name)
             val started = System.nanoTime()
             val reading = reader.read(picture, acceptImageAlone = true, indexCovers = true, inData = { true }, foilNet = foilNet,
-                textReader = textReader, stripPrinting = { _, _ -> printing })
+                textReader = textReader, stripPrinting = { set, number -> lookups["${set.lowercase()} $number"] ?: printing },
+                describe = { id -> names[id] ?: stripIndex.facts[id]?.let { PictureReader.Described(it.name) } })
             total += (System.nanoTime() - started) / 1_000_000
             picture.release()
             val s = want.getJSONObject("strip")
@@ -186,6 +201,13 @@ class PictureReaderParityTest {
                 want.optString("refused").takeIf { !want.isNull("refused") })
             val gotDecision = listOf(reading.decision.path, reading.decision.printingId, reading.stripNames, reading.acceptance.accepted.toString(), reading.acceptance.refused)
             if (wantDecision != gotDecision) problems += "$name: decision $gotDecision, the server $wantDecision"
+            // the full-card check's facts, where the server asked for it
+            if (full != null) {
+                val f = full.getJSONObject("facts")
+                val wantFacts = com.cardscanner.reading.Decide.OcrFacts(f.getBoolean("name_matches"), f.optString("line_names").takeIf { !f.isNull("line_names") },
+                    f.getBoolean("name_of_other_line"), f.optString("strip_names").takeIf { !f.isNull("strip_names") })
+                if (reading.full != wantFacts) problems += "$name: full-card facts ${reading.full}, the server $wantFacts (read ${full.opt("read")})"
+            } else if (reading.full != null) problems += "$name: the full card was read, the server did not ask for it"
             val wantFinish = want.optJSONObject("finish")?.let { it.getString("finish") to it.getString("source") }
             val gotFinish = reading.finish?.let { it.finish to it.source }
             if (stripDiffers || netDiffers || wantFinish != gotFinish) {
@@ -204,8 +226,8 @@ class PictureReaderParityTest {
     /**
      * A collector line naming ANOTHER PRINTING OF THE SAME CARD refuses a decision by the picture alone (a Codex review of 2026-10-21: it was let through,
      * and the picture's printing A added where the line said B) - the strip's half of the server's confirm_by_ocr. A line naming a different card does not
-     * (a Secret Lair's printed line), nor the chosen printing itself. On real captures: one the picture decides alone and whose strip has a whole line, the
-     * card data's answer for that line replaced by each kind of printing.
+     * (a Secret Lair's printed line). On a real capture the picture decides alone, whose strip has a whole line and whose full card confirms on its own:
+     * the card data's answer for the strip's line replaced by each kind of printing, every other line answered as the server's card data answered it.
      */
     @Test fun aLineNamingAnotherPrintingOfTheSameCardRefusesThePictureAlone() {
         val reference = JSONObject(asset("reference.json").use { String(it.readBytes()) })
@@ -214,22 +236,34 @@ class PictureReaderParityTest {
         val textReader = com.cardscanner.reading.TextReader.load(instrumentation.targetContext)!!
         val cases = reference.getJSONArray("cases").let { a -> List(a.length()) { a.getJSONObject(it) } }
         val skip = setOf("phone-0240eb84_1041_1792505189.png", "phone-0240eb84_110_1792204606.png")
-        // the picture alone decided, the strip read a whole line, and the chosen card has another printing in the index
+        // the picture alone decided, the strip read a whole line, the full card confirms it on its own (the name read), and the chosen card has another
+        // printing in the index: only the strip's line can make the difference
         val case = cases.first { c ->
             val w = c.getJSONObject("with_strip")
             val chosen = w.getJSONObject("decision").optString("printing_id")
             c.getString("picture") !in skip && w.getBoolean("accepted") && w.getJSONObject("decision").getString("path") == "image" &&
                 w.getJSONObject("strip").getString("number").isNotEmpty() && w.getJSONObject("strip").getString("set").isNotEmpty() &&
+                w.optJSONObject("full_card")?.getJSONObject("facts")?.getBoolean("name_matches") == true &&
                 index.ids.any { it != chosen && reader.sameCard(it, chosen) }
         }
         val chosen = case.getJSONObject("with_strip").getJSONObject("decision").getString("printing_id")
         val sameCard = index.ids.first { it != chosen && reader.sameCard(it, chosen) }
         val otherCard = index.ids.first { it != chosen && !reader.sameCard(it, chosen) && index.facts.containsKey(it) }
+        // the strip's line is made to name `named`; every other line (the full card's own) is answered as the server's card data answered it
+        val strip = case.getJSONObject("with_strip").getJSONObject("strip")
+        val stripKey = "${strip.getString("set").lowercase()} ${strip.getString("number")}"
+        val answers = HashMap<String, PictureReader.StripPrinting>()
+        case.getJSONObject("with_strip").optJSONObject("full_card")?.optJSONObject("lookups")?.let { l ->
+            for (key in l.keys()) answers[key] = l.optJSONObject(key)?.let { PictureReader.StripPrinting.Found(it.getString("id")) } ?: PictureReader.StripPrinting.NotFound
+        }
         fun readWith(named: String): PictureReader.Reading {
             val picture = rgba(case.getString("picture"))
             try {
                 return reader.read(picture, acceptImageAlone = true, indexCovers = true, inData = { true }, textReader = textReader,
-                    stripPrinting = { _, _ -> PictureReader.StripPrinting.Found(named) })
+                    stripPrinting = { set, number ->
+                        val key = "${set.lowercase()} $number"
+                        if (key == stripKey) PictureReader.StripPrinting.Found(named) else answers[key] ?: PictureReader.StripPrinting.NotFound
+                    }, describe = { id -> index.facts[id]?.let { PictureReader.Described(it.name) } })
             } finally { picture.release() }
         }
         val refused = readWith(sameCard)
@@ -237,7 +271,9 @@ class PictureReaderParityTest {
         assertEquals(com.cardscanner.reading.Decide.OCR_DID_NOT_CONFIRM, refused.acceptance.refused)
         assertEquals(null, refused.printingId)
         assertEquals("a different card's line is no evidence (a Secret Lair)", chosen, readWith(otherCard).printingId)
-        assertEquals("the chosen printing itself", chosen, readWith(chosen).printingId)
+        // (no "the chosen printing itself" case: a line names the chosen printing only by its OWN set and number - printing_check._line_names - which a stand-in
+        // lookup cannot fake; a lookup that lands on the chosen printing from another set and number is the same card, refused - as on the server. The
+        // chosen-by-its-line path is the 41 captures' parity: their "strong" decisions)
     }
 
     @Test fun anIndexThatDoesNotHoldTogetherIsNoIndex() {

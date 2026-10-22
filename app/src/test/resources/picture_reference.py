@@ -35,7 +35,8 @@ sys.path.insert(0, str(SERVER / 'src'))
 from card_scanner.config import Config  # noqa: E402
 from card_scanner.core import foil_marker, image_index, printing_check  # noqa: E402
 from card_scanner.core.database import CardDatabase  # noqa: E402
-from card_scanner.core.reading.decide import accept_printing, decide_finish, decide_printing  # noqa: E402
+from card_scanner.core.reading.decide import accept_printing, confirm_by_ocr, decide_finish, decide_printing  # noqa: E402
+from card_scanner.core import card_ocr  # noqa: E402
 sys.path.insert(0, str(SERVER / 'scripts/experiments/ocr_port'))
 import ppocr_reference  # noqa: E402
 
@@ -67,8 +68,9 @@ strip_reader = ppocr_reference.Reader()
 def with_strip(rgb, search, picture, cards):
     """live_read WITH the strip read by the OCR reference (and the foil network at the OCR's box where it read no symbol): the strip's evidence, what its line
     names (the card data's printing at that set and number - the phone is given it by the test), rule A2, the guards (the picture alone allowed, the index
-    covering the card data, OCR on but NO full-card confirmation: the phone has none yet - ocr_on is given as False so that needs_ocr does not stand in for
-    it), the finish"""
+    covering the card data, OCR ON), and - for a decision by the picture alone (needs_ocr) - the server's full-card confirmation, as Identification._ocr_names
+    does it: the card read whole as given (card_ocr.parse_magic of the OCR reference's lines), printing_check.ocr_facts (the lookup through
+    printing_named_by_line) and confirm_by_ocr with the decision's lead; the finish"""
     upright = cv2.rotate(rgb, cv2.ROTATE_180) if search['rotated'] else rgb
     strip = printing_check.read_strip_evidence(strip_reader, upright, net)
     decision = decide_printing(picture, {'number': strip['number'], 'set': strip['set']})
@@ -76,13 +78,31 @@ def with_strip(rgb, search, picture, cards):
     named = check._strip_printing(strip)
     line = None if named is printing_check.NO_LINE else 'lookup_failed' if named is printing_check.LOOKUP_FAILED else (named['id'] if named else '')
     alone = decision['path'] == 'image'
-    facts = {'accept_image_alone': True, 'index_covers': True, 'in_data': bool(card), 'ocr_on': False,
+    facts = {'accept_image_alone': True, 'index_covers': True, 'in_data': bool(card), 'ocr_on': True,
              'strip_names': check._strip_names(search['index'], strip, decision['printing_id']) if alone and card else None}
     verdict = accept_printing(decision, facts, {'image_min_similarity': printing_check.IMAGE_MIN_SIMILARITY,
                                                 'strong_min_similarity': printing_check.STRONG_MIN_SIMILARITY})
+    full = None
+    if verdict['needs_ocr']:
+        # Identification._ocr_names: the card as given, read whole; its facts; the decision
+        lines = strip_reader.read_lines(rgb)
+        read = card_ocr.parse_magic(lines, rgb.shape[1], rgb.shape[0])
+        printing_at = lambda set_code, number: printing_check.printing_named_by_line(database.get_card_by_set_number, set_code, number)
+        ocr = printing_check.ocr_facts(read, card, printing_at, {'number': strip['number'], 'set': strip['set']})
+        # the printings the facts were looked up as (the phone is given the card data's answers by the test, as for the strip)
+        lookups = {}
+        for s, n in ((read or {}).get('set_code'), (read or {}).get('collector_number')), (strip['set'], strip['number']):
+            if s and n:
+                found = printing_at(s, n)
+                lookups[f"{s.lower()} {n}"] = {'id': found['id'], 'name': found['name'], 'flavor_name': found.get('flavor_name'),
+                                                'oracle_id': found.get('oracle_id')} if found else None
+        confirmed = confirm_by_ocr(ocr, decision['lead'])
+        full = {'read': read, 'facts': ocr, 'lookups': lookups, 'card': {'name': card['name'], 'flavor_name': card.get('flavor_name')},
+                'accepted': confirmed['accepted'], 'refused': confirmed['refused']}
+        verdict = {'accepted': confirmed['accepted'], 'refused': confirmed['refused'], 'needs_ocr': False}
     return {'strip': strip, 'strip_printing': line,              # None: no whole line; '': the card data has none; an id; 'lookup_failed'
             'decision': {'path': decision['path'], 'printing_id': decision['printing_id']},
-            'strip_names': facts['strip_names'], 'accepted': bool(verdict['accepted']), 'refused': verdict['refused'],
+            'strip_names': facts['strip_names'], 'accepted': bool(verdict['accepted']), 'refused': verdict['refused'], 'full_card': full,
             'finish': decide_finish(card.get('finishes'), strip['symbol'], strip['net']) if verdict['accepted'] and card else None}
 net = foil_marker.load()
 assert net is not None, 'the foil network (core/foil_net.onnx) did not load'

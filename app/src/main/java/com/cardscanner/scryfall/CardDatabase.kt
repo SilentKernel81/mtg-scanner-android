@@ -157,6 +157,18 @@ class CardDatabase(context: Context, private val http: OkHttpClient) {
     fun byId(id: String): Printing? = query("id = ?", arrayOf(id)).firstOrNull()
 
     /**
+     * A printing's name and flavor name, for the full-card OCR's name check (database.names_match checks both): the flavor name as the card data keeps it,
+     * its search key (Scryfall.searchKey) - which namesMatch keys again to the same text. Null when the card data lacks the printing
+     */
+    @Synchronized
+    fun namesOf(id: String): Pair<String, String?>? {
+        val db = db ?: return null
+        return db.rawQuery("SELECT name, flavor_key FROM cards WHERE id = ?", arrayOf(id)).use { c ->
+            if (c.moveToFirst()) c.getString(0) to c.getString(1)?.ifEmpty { null } else null
+        }
+    }
+
+    /**
      * How many printings of this card data [isIndexed] says no to - the picture index's coverage of it (reading/PictureIndexRepository: the picture alone adds
      * nothing while the index lacks any printing, as on the server: PrintingCheck.missing_printings). Null without card data. One pass over the ids.
      */
