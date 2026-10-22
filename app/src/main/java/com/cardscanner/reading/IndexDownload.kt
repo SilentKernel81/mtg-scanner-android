@@ -21,6 +21,10 @@ import java.security.MessageDigest
  *    the checksums say the bytes arrived as sent, not that they hold together - a count that does not match, another hash size, a table of other
  *    columns): a download that does not load leaves the index that worked in place, and its own files are removed (a Codex review of 2026-10-21).
  * [ImageIndex.DESCRIPTOR] must be the server's descriptor, or nothing is downloaded (another fingerprint: every distance would be wrong).
+ *  - while the server is CHANGING its index - a build running (`building`), or a card data download (`card_data_updating`: the printings table follows it
+ *    and an extension of the index usually comes after) - nothing is downloaded: [ServerBusy], and the index the phone has stays. An automatic update on
+ *    the server changes the two a few minutes apart, and a download in between would get a generation about to be replaced, or a 409 twice (2026-10-22).
+ *    A server older than these two fields lists none of them, and is downloaded from as before.
  */
 class IndexDownload(private val http: OkHttpClient, serverUrl: String, private val token: String, private val folder: File) {
     private companion object { const val CANDIDATE = "manifest.json.new" }
@@ -55,6 +59,15 @@ class IndexDownload(private val http: OkHttpClient, serverUrl: String, private v
             }
             if (json.optString("descriptor") != ImageIndex.DESCRIPTOR)
                 throw ServerRefused("The server's index is of another fingerprint (${json.optString("descriptor")}) than this app's - update the app", 0)
+            // Changing right now: wait rather than download what is about to be replaced (stations_api.image_index_download says so; an older server does not)
+            val building = json.optJSONObject("building")
+            if (building != null && building.optBoolean("running")) {
+                val total = building.optLong("total")
+                val howFar = if (total > 0) " (%,d of %,d new pictures)".format(building.optLong("done"), total) else ""
+                throw ServerBusy("The server is updating its picture index$howFar - try again in a few minutes. The index you have stays")
+            }
+            if (json.optBoolean("card_data_updating"))
+                throw ServerBusy("The server is updating its card data, and its picture index after it - try again in a few minutes. The index you have stays")
             return Listing(json)
         }
     }
@@ -67,6 +80,9 @@ class IndexDownload(private val http: OkHttpClient, serverUrl: String, private v
 
     /** Thrown when the server answers 409: the listing is out of date */
     private class Stale : IOException("the index changed on the server")
+
+    /** Thrown when the server says its index is changing right now: nothing is fetched, the index the phone has stays - to be tried again in a few minutes */
+    class ServerBusy(message: String) : IOException(message)
 
     /**
      * Fetch one file to [target] (resuming its .part), checked against [sha256]. [onBytes] gets the bytes of this file so far.

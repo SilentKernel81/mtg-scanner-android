@@ -52,7 +52,9 @@ imported. **Read by the picture first** (Settings -> Reading cards, on by defaul
 offline card data and the picture index downloaded from a scanner server (its address in the same card), a card whose
 picture clearly matches one printing is added without the AI, offline, in a few hundredths of a second; the row says
 *read by the picture*. While the index lacks any printing of the card data (the two downloaded on different days) the
-picture adds nothing - Settings says so. The finish of a card the picture decided is the printing's own when it exists in one only, else the
+picture adds nothing - Settings says so. While the server is changing its index (a build, or a card data download it follows -
+its listing says so since 2026-10-22) the download waits and says to try again in a few minutes; the index the phone has stays
+(`IndexDownload.ServerBusy`; never tried against a server mid-update). The finish of a card the picture decided is the printing's own when it exists in one only, else the
 ★ / • marker read by the foil network at its fixed place (`FoilNet.fixedCrop`, only for a recent modern-frame card the search turned upright - the server's
 reading with OCR off: 17 of 28 on the Pixel captures), else the AI's foil check. **Ask the vision AI** off: what the picture does not settle waits for review, with
 the picture's best guess as the suggestion - no AI requests at all. Tried on the owner's Pixel 10 on 2026-10-21 (Sol Rings and Lightning Bolts: the printing and the finish right, the

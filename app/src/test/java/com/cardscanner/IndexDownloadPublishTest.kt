@@ -28,7 +28,7 @@ import java.util.zip.GZIPOutputStream
  */
 class IndexDownloadPublishTest {
     /** One generation as the server would serve it: its three files and the listing that names them */
-    private class Generation(val generation: String, rows: Int, countClaimed: Int = rows) {
+    private class Generation(val generation: String, rows: Int, countClaimed: Int = rows, building: Boolean = false, cardDataUpdating: Boolean = false) {
         val hashes = ByteArray(rows * ImageIndex.HASH_BYTES) { (it * 7 + generation.length).toByte() }
         val ids = (0 until rows).joinToString("\n") { "id-$it" }.toByteArray()
         val printings = ByteArrayOutputStream().also { out ->
@@ -40,14 +40,19 @@ class IndexDownloadPublishTest {
         val files = mapOf("hashes" to hashes, "ids" to ids, "printings" to printings)
         val listing = JSONObject().put("success", true).put("descriptor", ImageIndex.DESCRIPTOR).put("generation", generation)
             .put("count", countClaimed).put("hash_bytes", ImageIndex.HASH_BYTES).put("built", "2026-10-21 12:00:00")
+            .apply {
+                // the two fields of a server that says when its index is changing (2026-10-22); left out, the listing is an older server's
+                if (building) put("building", JSONObject().put("running", true).put("done", 1200).put("total", 3592))
+                if (cardDataUpdating) put("card_data_updating", true)
+            }
             .put("files", JSONArray(files.map { (kind, bytes) ->
                 JSONObject().put("kind", kind).put("bytes", bytes.size).put("sha256", ImageIndex.sha256(bytes))
                     .put("url", "/api/image_index/download/$kind?generation=$generation" + if (kind == "printings") "&version=${ImageIndex.sha256(bytes)}" else "")
             }))
     }
 
-    /** A server that serves [current] (changed by the test) */
-    private fun server(current: () -> Generation) = OkHttpClient.Builder().addInterceptor { chain ->
+    /** A server that serves [current] (changed by the test); [served] is told the path of each request it answered (a test changes the index there) */
+    private fun server(served: (String) -> Unit = {}, current: () -> Generation) = OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()
         val served = current()
         val path = request.url.encodedPath
@@ -62,6 +67,7 @@ class IndexDownloadPublishTest {
         }
         Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("Test")
             .body(body.toResponseBody(type.toMediaType())).build()
+            .also { if (code == 200) served(path) }
     }.build()
 
     @Test fun anUpdateThatDoesNotLoadLeavesTheIndexThatWorked() {
@@ -95,6 +101,65 @@ class IndexDownloadPublishTest {
         assertEquals("g3", download.download { _, _, _ -> })
         assertEquals(4, ImageIndex.load(folder)?.count)
         assertTrue(folder.list()!!.none { "g1" in it })              // the old generation's files go once the new one is published
+        folder.deleteRecursively()
+    }
+
+    @Test fun anIndexChangedDuringTheDownloadIsAskedForAgainAndTheNewOneIsPublished() {
+        // The server publishes g2 right after sending g1's fingerprints: g1's ids are refused (409), the listing is asked again, g2 is downloaded whole
+        val folder = Files.createTempDirectory("picture_index").toFile()
+        var current = Generation("g1", rows = 3)
+        val http = server(served = { path -> if (path.endsWith("/hashes") && current.generation == "g1") current = Generation("g2", rows = 4) }) { current }
+        assertEquals("g2", IndexDownload(http, "http://server.test:5000", "", folder).download { _, _, _ -> })
+        assertEquals(4, ImageIndex.load(folder)?.count)
+        assertTrue(folder.list()!!.toString(), folder.list()!!.none { "g1" in it })     // what was fetched of g1 is gone with it
+        folder.deleteRecursively()
+    }
+
+    @Test fun anIndexThatKeepsChangingIsGivenUpAndTheIndexThatWorkedStays() {
+        // Two changes in one download (an automatic update: the card data, then the new generation) - after the second 409 it stops; g0 is still loaded
+        val folder = Files.createTempDirectory("picture_index").toFile()
+        var current = Generation("g0", rows = 3)
+        var changing = false
+        val http = server(served = { path ->
+            if (changing && path.endsWith("/hashes")) current = Generation(if (current.generation == "g1") "g2" else "g3", rows = 4)
+        }) { current }
+        val download = IndexDownload(http, "http://server.test:5000", "", folder)
+        assertEquals("g0", download.download { _, _, _ -> })
+        changing = true
+        current = Generation("g1", rows = 4)
+        try {
+            download.download { _, _, _ -> }
+            fail("an index that kept changing was published")
+        } catch (e: IOException) {
+            assertTrue(e.message.orEmpty(), e.message.orEmpty().contains("kept changing"))
+        }
+        assertEquals("g0", ImageIndex.load(folder)?.generation)
+        folder.deleteRecursively()
+    }
+
+    @Test fun whileTheServerChangesItsIndexNothingIsDownloadedAndTheIndexThatWorkedStays() {
+        val folder = Files.createTempDirectory("picture_index").toFile()
+        var current = Generation("g1", rows = 3)
+        val asked = mutableListOf<String>()
+        val download = IndexDownload(server(served = { asked += it }) { current }, "http://server.test:5000", "", folder)
+        assertEquals("g1", download.download { _, _, _ -> })
+
+        for ((busy, says) in listOf(Generation("g2", rows = 4, building = true) to "1,200 of 3,592",
+                                    Generation("g2", rows = 4, cardDataUpdating = true) to "card data")) {
+            current = busy
+            asked.clear()
+            try {
+                download.download { _, _, _ -> }
+                fail("downloaded while the server was changing its index")
+            } catch (e: IndexDownload.ServerBusy) {
+                assertTrue(e.message.orEmpty(), e.message.orEmpty().contains(says) && e.message.orEmpty().contains("try again"))
+            }
+            assertEquals(listOf("/api/image_index/download"), asked)         // the listing only: not one file
+            assertEquals("g1", ImageIndex.load(folder)?.generation)
+        }
+        // and once it is done, the new one comes as usual
+        current = Generation("g2", rows = 4)
+        assertEquals("g2", download.download { _, _, _ -> })
         folder.deleteRecursively()
     }
 
